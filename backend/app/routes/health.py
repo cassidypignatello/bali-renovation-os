@@ -39,7 +39,7 @@ async def readiness_check():
     try:
         # Test database connection
         supabase = get_supabase_client()
-        supabase.table("estimates").select("estimate_id").limit(1).execute()
+        supabase.table("projects").select("id").limit(1).execute()
         checks["database"] = True
     except Exception:
         checks["database"] = False
