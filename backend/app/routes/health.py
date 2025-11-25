@@ -33,7 +33,6 @@ async def readiness_check():
     Returns:
         dict: Readiness status with dependency checks
     """
-    settings = get_settings()
     checks = {"api": True, "config": True, "database": False}
 
     try:

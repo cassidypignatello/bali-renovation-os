@@ -6,7 +6,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, status
 
 from app.integrations.supabase import get_estimate
 from app.middleware.rate_limit import HEAVY_LIMIT, limiter
-from app.schemas.estimate import EstimateResponse, EstimateStatusResponse
+from app.schemas.estimate import EstimateStatusResponse
 from app.schemas.project import ProjectInput
 from app.services.bom_generator import create_estimate, process_estimate
 

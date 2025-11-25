@@ -30,8 +30,6 @@ async def unlock_worker_details(request: Request, unlock_req: UnlockRequest):
     Returns:
         UnlockResponse: Payment URL and transaction details
     """
-    settings = get_settings()
-
     # Fixed unlock price: 50,000 IDR
     unlock_price_idr = 50000
 
