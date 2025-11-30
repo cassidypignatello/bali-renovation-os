@@ -22,6 +22,11 @@ def calculate_similarity(str1: str, str2: str) -> float:
     return SequenceMatcher(None, str1.lower(), str2.lower()).ratio()
 
 
+def get_material_display_name(entry: dict) -> str:
+    """Get the best display name from a material entry (prefer Indonesian)."""
+    return entry.get("name_id") or entry.get("name_en") or ""
+
+
 async def find_exact_match(material_name: str) -> dict | None:
     """
     Attempt exact match from historical data
@@ -39,14 +44,21 @@ async def find_exact_match(material_name: str) -> dict | None:
 
     # Look for high-confidence exact match (>0.95 similarity)
     for entry in history:
-        similarity = calculate_similarity(material_name, entry["material_name"])
+        # Check similarity against both Indonesian and English names
+        name_id = entry.get("name_id", "")
+        name_en = entry.get("name_en", "")
+
+        similarity_id = calculate_similarity(material_name, name_id) if name_id else 0
+        similarity_en = calculate_similarity(material_name, name_en) if name_en else 0
+        similarity = max(similarity_id, similarity_en)
+
         if similarity > 0.95:
             return {
-                "material_name": entry["material_name"],
-                "unit_price_idr": entry["unit_price_idr"],
+                "material_name": get_material_display_name(entry),
+                "unit_price_idr": entry.get("price_avg", 0),
                 "source": "historical",
                 "confidence": similarity,
-                "marketplace_url": entry.get("marketplace_url"),
+                "marketplace_url": entry.get("tokopedia_search"),  # Use search term as fallback
             }
 
     return None
@@ -72,15 +84,22 @@ async def find_fuzzy_match(material_name: str, threshold: float = 0.75) -> dict 
     best_score = threshold
 
     for entry in history:
-        similarity = calculate_similarity(material_name, entry["material_name"])
+        # Check similarity against both Indonesian and English names
+        name_id = entry.get("name_id", "")
+        name_en = entry.get("name_en", "")
+
+        similarity_id = calculate_similarity(material_name, name_id) if name_id else 0
+        similarity_en = calculate_similarity(material_name, name_en) if name_en else 0
+        similarity = max(similarity_id, similarity_en)
+
         if similarity > best_score:
             best_score = similarity
             best_match = {
-                "material_name": entry["material_name"],
-                "unit_price_idr": entry["unit_price_idr"],
+                "material_name": get_material_display_name(entry),
+                "unit_price_idr": entry.get("price_avg", 0),
                 "source": "historical_fuzzy",
                 "confidence": similarity,
-                "marketplace_url": entry.get("marketplace_url"),
+                "marketplace_url": entry.get("tokopedia_search"),
             }
 
     return best_match

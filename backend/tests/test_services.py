@@ -45,8 +45,9 @@ class TestSemanticMatcher:
     async def test_find_exact_match_found(self):
         """Should return match when similarity > 0.95"""
         with patch("app.services.semantic_matcher.search_materials") as mock_history:
+            # Use actual database schema fields: name_id, name_en, price_avg
             mock_history.return_value = [
-                {"material_name": "Semen Portland 50kg", "unit_price_idr": 65000}
+                {"name_id": "Semen Portland 50kg", "name_en": "Portland Cement 50kg", "price_avg": 65000}
             ]
 
             from app.services.semantic_matcher import find_exact_match
@@ -73,9 +74,10 @@ class TestSemanticMatcher:
     async def test_find_fuzzy_match_found(self):
         """Should return best fuzzy match above threshold"""
         with patch("app.services.semantic_matcher.search_materials") as mock_history:
+            # Use actual database schema fields: name_id, name_en, price_avg
             mock_history.return_value = [
-                {"material_name": "Semen Portland Tiga Roda", "unit_price_idr": 65000},
-                {"material_name": "Semen Holcim", "unit_price_idr": 60000},
+                {"name_id": "Semen Portland Tiga Roda", "name_en": "Portland Cement Tiga Roda", "price_avg": 65000},
+                {"name_id": "Semen Holcim", "name_en": "Holcim Cement", "price_avg": 60000},
             ]
 
             from app.services.semantic_matcher import find_fuzzy_match
@@ -89,8 +91,9 @@ class TestSemanticMatcher:
     async def test_find_fuzzy_match_below_threshold(self):
         """Should return None when no match above threshold"""
         with patch("app.services.semantic_matcher.search_materials") as mock_history:
+            # Use actual database schema fields: name_id, name_en, price_avg
             mock_history.return_value = [
-                {"material_name": "Keramik 60x60", "unit_price_idr": 85000}
+                {"name_id": "Keramik 60x60", "name_en": "Ceramic Tiles 60x60", "price_avg": 85000}
             ]
 
             from app.services.semantic_matcher import find_fuzzy_match

@@ -1,10 +1,13 @@
 """
 Price enrichment engine for BOM items
 Combines semantic matching, scraping, and caching
+
+Uses quality-based filtering to prioritize reliable sellers.
+Designed for future multi-source aggregation (Shopee, local stores, etc.)
 """
 
-from app.integrations.apify import calculate_median_price, scrape_tokopedia_prices
-from app.services.semantic_matcher import match_material, enhance_search_term
+from app.integrations.apify import get_best_price, scrape_tokopedia_prices
+from app.services.semantic_matcher import enhance_search_term, match_material
 
 
 async def enrich_single_material(material: dict) -> dict:
@@ -44,32 +47,44 @@ async def enrich_single_material(material: dict) -> dict:
             "marketplace_url": matched.get("marketplace_url"),
         }
 
-    # Cache miss - scrape Tokopedia
+    # Cache miss - scrape Tokopedia with quality filtering
     try:
-        # Enhance search term for better results
+        # Enhance search term for better marketplace results
         search_term = await enhance_search_term(material_name)
 
-        products = await scrape_tokopedia_prices(search_term, max_results=5)
+        # Fetch more results for quality filtering (will filter down)
+        products = await scrape_tokopedia_prices(search_term, max_results=10)
 
         if products:
-            # Calculate median price for robustness
-            median_price = calculate_median_price(products)
+            # Get best price using quality-based filtering
+            # Filters unreliable sellers, uses median of trusted products
+            price_result = get_best_price(products)
 
-            if median_price > 0:
-                total_price = int(median_price * quantity)
+            if price_result["price_idr"] > 0:
+                unit_price = price_result["price_idr"]
+                total_price = int(unit_price * quantity)
 
-                # Note: Prices are now embedded in materials table
-                # Use update_material_prices() for batch updates
+                # Confidence based on quality filtering results
+                # Higher confidence when more products qualified
+                base_confidence = 0.75
+                quality_bonus = min(0.15, price_result["products_qualified"] * 0.03)
+                confidence = base_confidence + quality_bonus
+
+                # Use best quality product's URL
+                best_product = price_result["source_product"]
+                marketplace_url = best_product["url"] if best_product else None
 
                 return {
                     "material_name": material_name,
                     "quantity": quantity,
                     "unit": material["unit"],
-                    "unit_price_idr": median_price,
+                    "unit_price_idr": unit_price,
                     "total_price_idr": total_price,
                     "source": "tokopedia",
-                    "confidence": 0.85,
-                    "marketplace_url": products[0]["url"],
+                    "confidence": confidence,
+                    "marketplace_url": marketplace_url,
+                    "quality_score": price_result["quality_score"],
+                    "products_analyzed": price_result["products_analyzed"],
                 }
 
     except Exception as e:
