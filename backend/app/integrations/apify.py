@@ -12,6 +12,7 @@ from apify_client import ApifyClient
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from app.config import get_settings
+from app.utils.resilience import with_circuit_breaker
 
 
 # =============================================================================
@@ -140,6 +141,7 @@ def get_apify_client() -> ApifyClient:
     return ApifyClient(settings.apify_token)
 
 
+@with_circuit_breaker("apify")
 @retry(
     stop=stop_after_attempt(2),
     wait=wait_exponential(multiplier=1, min=2, max=8),

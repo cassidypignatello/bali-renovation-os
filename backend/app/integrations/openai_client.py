@@ -9,6 +9,7 @@ from openai import AsyncOpenAI
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from app.config import get_settings
+from app.utils.resilience import with_circuit_breaker
 
 # System prompt as constant for OpenAI prompt caching
 # This will be cached by OpenAI when sent consistently
@@ -52,6 +53,7 @@ def get_openai_client() -> AsyncOpenAI:
     return AsyncOpenAI(api_key=settings.openai_api_key)
 
 
+@with_circuit_breaker("openai")
 @retry(
     stop=stop_after_attempt(3),
     wait=wait_exponential(multiplier=1, min=2, max=10),

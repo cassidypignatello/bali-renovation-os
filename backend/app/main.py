@@ -12,6 +12,7 @@ from slowapi.util import get_remote_address
 
 from app.config import get_settings
 from app.middleware.error_handler import add_error_handlers
+from app.middleware.timeout import TimeoutMiddleware
 from app.routes import estimates, health, materials, payments, workers
 
 settings = get_settings()
@@ -50,6 +51,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Add timeout middleware (process requests first to add timeout protection)
+app.add_middleware(TimeoutMiddleware, default_timeout=30)
 
 # Add custom error handlers
 add_error_handlers(app)
