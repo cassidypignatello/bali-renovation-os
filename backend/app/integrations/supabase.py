@@ -486,6 +486,42 @@ async def create_scrape_job(
     return response.data[0] if response.data else {}
 
 
+async def save_scrape_job(
+    job_type: str,
+    apify_actor_id: str,
+    input_params: dict,
+    estimated_cost_usd: float = 0.0,
+) -> str:
+    """
+    Create a new scrape job with cost tracking.
+    Alias for create_scrape_job with enhanced cost metadata.
+
+    Args:
+        job_type: Type of job (worker_discovery, material_pricing)
+        apify_actor_id: Apify actor ID
+        input_params: Actor input configuration
+        estimated_cost_usd: Estimated cost for this run
+
+    Returns:
+        str: Job ID (UUID)
+    """
+    # Store cost metadata in input_params
+    enhanced_params = {
+        **input_params,
+        "_meta": {
+            "estimated_cost_usd": estimated_cost_usd,
+            "created_by": "google_maps_scraper",
+        }
+    }
+
+    job = await create_scrape_job(
+        job_type=job_type,
+        input_params=enhanced_params,
+        apify_actor_id=apify_actor_id
+    )
+    return job["id"]
+
+
 async def update_scrape_job(
     job_id: str,
     status: str,
@@ -502,5 +538,56 @@ async def update_scrape_job(
     supabase = get_supabase_client()
     update_data = {"status": status, **kwargs}
     supabase.table("scrape_jobs").update(update_data).eq("id", job_id).execute()
+
+
+async def update_scrape_job_status(
+    job_id: str,
+    status: str,
+    apify_run_id: str | None = None,
+    started_at: str | None = None,
+    completed_at: str | None = None,
+    results_count: int | None = None,
+    actual_cost_usd: float | None = None,
+    output_data: dict | None = None,
+    error_message: str | None = None,
+) -> None:
+    """
+    Update scrape job status with detailed tracking.
+    Enhanced version of update_scrape_job with cost tracking.
+
+    Args:
+        job_id: UUID of the job
+        status: New status (pending, running, completed, failed)
+        apify_run_id: Apify run ID
+        started_at: Start timestamp
+        completed_at: Completion timestamp
+        results_count: Number of items scraped
+        actual_cost_usd: Actual cost incurred
+        output_data: Sample output data (stored in errors field for now)
+        error_message: Error message if failed
+    """
+    update_data = {"status": status}
+
+    if apify_run_id:
+        update_data["apify_run_id"] = apify_run_id
+    if started_at:
+        update_data["started_at"] = started_at
+    if completed_at:
+        update_data["completed_at"] = completed_at
+    if results_count is not None:
+        update_data["items_scraped"] = results_count
+
+    # Store cost and output metadata in errors field (JSONB)
+    if actual_cost_usd is not None or output_data is not None or error_message is not None:
+        metadata = {}
+        if actual_cost_usd is not None:
+            metadata["actual_cost_usd"] = actual_cost_usd
+        if output_data is not None:
+            metadata["sample_output"] = output_data
+        if error_message is not None:
+            metadata["error"] = error_message
+        update_data["errors"] = metadata
+
+    await update_scrape_job(job_id, status, **{k: v for k, v in update_data.items() if k != "status"})
 
 
