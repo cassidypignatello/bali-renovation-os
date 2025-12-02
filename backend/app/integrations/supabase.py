@@ -324,8 +324,138 @@ async def update_worker_trust(
     supabase.table("workers").update({
         "trust_score": trust_score,
         "trust_level": trust_level,
-        "trust_breakdown": trust_breakdown
+        "trust_breakdown": trust_breakdown,
+        "last_score_calculated_at": "now()"
     }).eq("id", worker_id).execute()
+
+
+async def bulk_insert_workers(workers: list[dict]) -> list[dict]:
+    """
+    Insert multiple workers at once (for scraper results).
+
+    Handles deduplication by checking gmaps_place_id uniqueness.
+    On conflict, updates existing records instead of inserting.
+
+    Args:
+        workers: List of worker dictionaries
+
+    Returns:
+        list[dict]: Inserted/updated worker records
+    """
+    if not workers:
+        return []
+
+    supabase = get_supabase_client()
+
+    # Use upsert with gmaps_place_id as conflict target
+    response = (
+        supabase.table("workers")
+        .upsert(workers, on_conflict="gmaps_place_id")
+        .execute()
+    )
+    return response.data if response.data else []
+
+
+async def get_cached_workers(
+    specialization: str,
+    max_age_hours: int = 168  # 7 days default
+) -> list[dict] | None:
+    """
+    Check if we have recently scraped workers for a specialization.
+
+    Args:
+        specialization: Worker specialization (pool, bathroom, etc.)
+        max_age_hours: Maximum cache age in hours (default 7 days = 168h)
+
+    Returns:
+        list[dict] | None: Cached workers if fresh, None if stale/missing
+    """
+    from datetime import datetime, timedelta, timezone
+
+    supabase = get_supabase_client()
+    cutoff_time = datetime.now(timezone.utc) - timedelta(hours=max_age_hours)
+
+    response = (
+        supabase.table("workers")
+        .select("*")
+        .contains("specializations", [specialization])
+        .eq("is_active", True)
+        .gte("last_scraped_at", cutoff_time.isoformat())
+        .order("trust_score", desc=True)
+        .execute()
+    )
+
+    results = response.data if response.data else []
+
+    # Return None if no results (cache miss), otherwise return workers
+    return results if results else None
+
+
+async def update_worker_scraped_timestamp(worker_ids: list[str]) -> None:
+    """
+    Update last_scraped_at timestamp for workers (bulk operation).
+
+    Args:
+        worker_ids: List of worker UUIDs to update
+    """
+    if not worker_ids:
+        return
+
+    from datetime import datetime, timezone
+
+    supabase = get_supabase_client()
+
+    # Batch update using IN clause
+    now = datetime.now(timezone.utc).isoformat()
+    supabase.table("workers").update({
+        "last_scraped_at": now,
+        "updated_at": now
+    }).in_("id", worker_ids).execute()
+
+
+async def search_workers(
+    specialization: str | None = None,
+    location: str | None = None,
+    min_trust_score: int = 0,
+    min_rating: float = 0.0,
+    limit: int = 20
+) -> list[dict]:
+    """
+    Search workers with flexible filters.
+
+    Args:
+        specialization: Filter by specialization (pool, bathroom, etc.)
+        location: Filter by location (Canggu, Ubud, etc.)
+        min_trust_score: Minimum trust score (0-100)
+        min_rating: Minimum Google Maps rating (0.0-5.0)
+        limit: Maximum results
+
+    Returns:
+        list[dict]: Matching workers sorted by trust score
+    """
+    supabase = get_supabase_client()
+    query = supabase.table("workers").select("*").eq("is_active", True)
+
+    if specialization:
+        query = query.contains("specializations", [specialization])
+
+    if location:
+        query = query.ilike("location", f"%{location}%")
+
+    if min_trust_score > 0:
+        query = query.gte("trust_score", min_trust_score)
+
+    if min_rating > 0:
+        query = query.gte("gmaps_rating", min_rating)
+
+    response = (
+        query
+        .order("trust_score", desc=True)
+        .limit(limit)
+        .execute()
+    )
+
+    return response.data if response.data else []
 
 
 # ============================================
