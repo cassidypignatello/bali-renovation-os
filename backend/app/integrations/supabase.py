@@ -459,6 +459,81 @@ async def search_workers(
 
 
 # ============================================
+# WORKER UNLOCKS
+# ============================================
+
+async def check_worker_unlock(worker_id: str, user_email: str) -> bool:
+    """
+    Check if user has unlocked a specific worker's contact information.
+
+    Args:
+        worker_id: UUID of the worker
+        user_email: User's email address
+
+    Returns:
+        bool: True if unlocked, False otherwise
+    """
+    supabase = get_supabase_client()
+    response = (
+        supabase.table("worker_unlocks")
+        .select("id")
+        .eq("worker_id", worker_id)
+        .eq("user_email", user_email)
+        .execute()
+    )
+    return len(response.data) > 0 if response.data else False
+
+
+async def create_worker_unlock(
+    worker_id: str,
+    user_email: str,
+    payment_id: str | None = None,
+    unlock_price_idr: int = 50000
+) -> dict:
+    """
+    Create a worker unlock record after successful payment.
+
+    Args:
+        worker_id: UUID of the worker
+        user_email: User's email address
+        payment_id: UUID of the associated payment
+        unlock_price_idr: Price paid to unlock (default 50000 IDR)
+
+    Returns:
+        dict: Created unlock record
+    """
+    supabase = get_supabase_client()
+    response = supabase.table("worker_unlocks").insert({
+        "worker_id": worker_id,
+        "user_email": user_email,
+        "payment_id": payment_id,
+        "unlock_price_idr": unlock_price_idr
+    }).execute()
+    return response.data[0] if response.data else {}
+
+
+async def get_user_unlocked_workers(user_email: str) -> list[dict]:
+    """
+    Get all workers unlocked by a user.
+
+    Args:
+        user_email: User's email address
+
+    Returns:
+        list[dict]: List of unlock records with worker IDs
+    """
+    supabase = get_supabase_client()
+    response = (
+        supabase.table("worker_unlocks")
+        .select("*")
+        .eq("user_email", user_email)
+        .order("unlocked_at", desc=True)
+        .execute()
+    )
+    return response.data if response.data else []
+
+
+# ============================================
 # PAYMENTS (formerly "transactions")
 # ============================================
 
