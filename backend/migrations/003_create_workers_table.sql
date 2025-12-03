@@ -1,6 +1,18 @@
 -- Migration 003: Worker Discovery System
 -- Creates tables for worker/contractor profiles from Google Maps scraping
 -- Run this in Supabase SQL Editor
+--
+-- IMPORTANT: This migration drops the old workers table from Migration 001
+-- and replaces it with a new schema optimized for Google Maps scraping.
+-- Safe to run in development since no worker data has been scraped yet.
+
+-- ============================================================================
+-- DROP OLD WORKERS TABLE
+-- ============================================================================
+-- Migration 001 created a workers table with different schema (worker_source ENUM)
+-- We need the new schema with source_tier VARCHAR for Google Maps integration
+
+DROP TABLE IF EXISTS workers CASCADE;  -- CASCADE drops dependent objects (reviews, unlocks if they exist)
 
 -- ============================================================================
 -- WORKERS TABLE
@@ -8,7 +20,7 @@
 -- Stores contractor/worker profiles from multiple sources (primarily Google Maps)
 -- with trust scoring and contact information
 
-CREATE TABLE IF NOT EXISTS workers (
+CREATE TABLE workers (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 
     -- Identity
@@ -77,7 +89,7 @@ CREATE TABLE IF NOT EXISTS workers (
 -- ============================================================================
 -- Stores individual reviews scraped from Google Maps or submitted on platform
 
-CREATE TABLE IF NOT EXISTS worker_reviews (
+CREATE TABLE worker_reviews (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     worker_id UUID REFERENCES workers(id) ON DELETE CASCADE,
 
@@ -105,7 +117,7 @@ CREATE TABLE IF NOT EXISTS worker_reviews (
 -- ============================================================================
 -- Tracks which users have unlocked which workers (after payment)
 
-CREATE TABLE IF NOT EXISTS worker_unlocks (
+CREATE TABLE worker_unlocks (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 
     -- Unlock Details
