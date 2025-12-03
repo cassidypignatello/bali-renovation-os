@@ -15,6 +15,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import BackgroundTasks
 from fastapi.testclient import TestClient
+from starlette.requests import Request
 
 from app.main import app
 from app.routes.workers_search import (
@@ -32,17 +33,26 @@ class TestSearchWorkersEndpoint:
     @patch("app.routes.workers_search.get_cached_workers")
     @patch("app.routes.workers_search.deduplicate_workers")
     @patch("app.routes.workers_search.rank_workers")
+    @patch("app.routes.workers_search.limiter.limit")
     async def test_cache_hit_returns_workers(
-        self, mock_rank, mock_dedupe, mock_get_cached
+        self, mock_limit, mock_rank, mock_dedupe, mock_get_cached
     ):
         """Should return workers immediately when cache hit"""
-        # Mock cached workers
+        # Mock rate limiter to bypass
+        mock_limit.return_value = lambda func: func
+
+        # Mock cached workers with all required fields
         mock_get_cached.return_value = [
             {
                 "id": "worker-1",
                 "business_name": "Bali Pool Service",
                 "trust_score": 85,
                 "trust_level": "HIGH",
+                "trust_breakdown": {"source": 24, "reviews": 20},
+                "source_tier": "google_maps",
+                "gmaps_review_count": 50,
+                "gmaps_rating": 4.8,
+                "gmaps_photos_count": 10,
                 "location": "Canggu",
                 "specializations": ["pool"],
                 "last_scraped_at": (
@@ -59,7 +69,11 @@ class TestSearchWorkersEndpoint:
             {**mock_get_cached.return_value[0], "ranking_score": 90.0}
         ]
 
-        request_mock = MagicMock()
+        # Create mock request with required attributes
+        request_mock = MagicMock(spec=Request)
+        request_mock.client = MagicMock()
+        request_mock.client.host = "127.0.0.1"
+
         search_request = WorkerSearchRequest(
             project_type="pool",
             location="Canggu",
@@ -81,12 +95,19 @@ class TestSearchWorkersEndpoint:
 
     @pytest.mark.asyncio
     @patch("app.routes.workers_search.get_cached_workers")
-    async def test_cache_miss_triggers_background_scrape(self, mock_get_cached):
+    @patch("app.routes.workers_search.limiter.limit")
+    async def test_cache_miss_triggers_background_scrape(self, mock_limit, mock_get_cached):
         """Should trigger background scrape when cache miss"""
+        # Mock rate limiter
+        mock_limit.return_value = lambda func: func
+
         # Mock cache miss
         mock_get_cached.return_value = None
 
-        request_mock = MagicMock()
+        request_mock = MagicMock(spec=Request)
+        request_mock.client = MagicMock()
+        request_mock.client.host = "127.0.0.1"
+
         search_request = WorkerSearchRequest(
             project_type="pool",
             location="Canggu"
@@ -104,18 +125,24 @@ class TestSearchWorkersEndpoint:
     @patch("app.routes.workers_search.get_cached_workers")
     @patch("app.routes.workers_search.deduplicate_workers")
     @patch("app.routes.workers_search.rank_workers")
+    @patch("app.routes.workers_search.limiter.limit")
     async def test_respects_min_trust_score_filter(
-        self, mock_rank, mock_dedupe, mock_get_cached
+        self, mock_limit, mock_rank, mock_dedupe, mock_get_cached
     ):
         """Should filter workers by minimum trust score"""
+        mock_limit.return_value = lambda func: func
+
         mock_get_cached.return_value = [
-            {"id": "w1", "trust_score": 85},
-            {"id": "w2", "trust_score": 45},
+            {"id": "w1", "trust_score": 85, "last_scraped_at": datetime.now(timezone.utc).isoformat()},
+            {"id": "w2", "trust_score": 45, "last_scraped_at": datetime.now(timezone.utc).isoformat()},
         ]
         mock_dedupe.return_value = mock_get_cached.return_value
-        mock_rank.return_value = [{"id": "w1", "trust_score": 85}]  # w2 filtered out
+        mock_rank.return_value = []  # Will be empty after filtering
 
-        request_mock = MagicMock()
+        request_mock = MagicMock(spec=Request)
+        request_mock.client = MagicMock()
+        request_mock.client.host = "127.0.0.1"
+
         search_request = WorkerSearchRequest(
             project_type="pool",
             location="Bali",
@@ -134,15 +161,29 @@ class TestSearchWorkersEndpoint:
     @patch("app.routes.workers_search.get_cached_workers")
     @patch("app.routes.workers_search.deduplicate_workers")
     @patch("app.routes.workers_search.rank_workers")
+    @patch("app.routes.workers_search.limiter.limit")
     async def test_limits_max_results(
-        self, mock_rank, mock_dedupe, mock_get_cached
+        self, mock_limit, mock_rank, mock_dedupe, mock_get_cached
     ):
         """Should limit results to max_results parameter"""
-        mock_get_cached.return_value = [{"id": f"w{i}"} for i in range(20)]
+        mock_limit.return_value = lambda func: func
+
+        mock_get_cached.return_value = [{
+            "id": f"w{i}",
+            "trust_score": 80,
+            "trust_level": "HIGH",
+            "trust_breakdown": {},
+            "source_tier": "google_maps",
+            "gmaps_review_count": 10,
+            "last_scraped_at": datetime.now(timezone.utc).isoformat()
+        } for i in range(20)]
         mock_dedupe.return_value = mock_get_cached.return_value
         mock_rank.return_value = mock_get_cached.return_value[:5]
 
-        request_mock = MagicMock()
+        request_mock = MagicMock(spec=Request)
+        request_mock.client = MagicMock()
+        request_mock.client.host = "127.0.0.1"
+
         search_request = WorkerSearchRequest(
             project_type="pool",
             location="Bali",
@@ -241,6 +282,9 @@ class TestTransformToPreview:
             "business_name": "Pak Wayan Pool Service",
             "trust_score": 85,
             "trust_level": "HIGH",
+            "trust_breakdown": {"source": 24, "reviews": 20},
+            "source_tier": "google_maps",
+            "gmaps_review_count": 50,
             "location": "Canggu",
             "specializations": ["pool"],
         }
@@ -248,7 +292,7 @@ class TestTransformToPreview:
         preview = transform_to_preview(worker)
 
         assert preview.preview_name != "Pak Wayan Pool Service"
-        assert "***" in preview.preview_name or len(preview.preview_name) < len("Pak Wayan Pool Service")
+        assert "█" in preview.preview_name  # mask_worker_name uses █ character
 
     def test_sets_contact_locked_true(self):
         """Should always set contact_locked to True for previews"""
@@ -257,6 +301,11 @@ class TestTransformToPreview:
             "business_name": "Test Worker",
             "phone": "+62812345678",  # Should be hidden
             "email": "test@example.com",  # Should be hidden
+            "trust_score": 75,
+            "trust_level": "HIGH",
+            "trust_breakdown": {},
+            "source_tier": "google_maps",
+            "gmaps_review_count": 20,
         }
 
         preview = transform_to_preview(worker)
@@ -277,21 +326,26 @@ class TestTransformToPreview:
                 "rating": 18,
                 "verification": 15,
                 "freshness": 8
-            }
+            },
+            "source_tier": "google_maps",
+            "gmaps_review_count": 100,
+            "gmaps_rating": 4.8,
         }
 
         preview = transform_to_preview(worker)
 
-        assert preview.trust_score_detailed["score"] == 85
-        assert preview.trust_score_detailed["level"] == "HIGH"
-        assert preview.trust_score_detailed["breakdown"]["source"] == 24
+        assert preview.trust_score.total_score == 85
+        assert preview.trust_score.trust_level.value == "HIGH"
+        assert preview.trust_score.breakdown["source"] == 24
+        assert preview.trust_score.source_tier == "google_maps"
+        assert preview.trust_score.review_count == 100
 
     def test_handles_missing_fields(self):
         """Should handle missing optional fields gracefully"""
         worker = {
             "id": "worker-1",
             "business_name": "Minimal Worker",
-            # All other fields missing
+            # All other fields missing - will use defaults
         }
 
         preview = transform_to_preview(worker)
@@ -299,7 +353,8 @@ class TestTransformToPreview:
         assert preview.id == "worker-1"
         assert preview.location == "Bali"  # Default
         assert preview.specializations == []
-        assert preview.trust_score_detailed["score"] == 0
+        assert preview.trust_score.total_score == 0
+        assert preview.trust_score.trust_level.value == "LOW"
 
 
 class TestWorkerSearchIntegration:
