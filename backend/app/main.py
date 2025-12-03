@@ -1,9 +1,10 @@
 """
 FastAPI application entry point for Bali Renovation OS
-Includes Sentry monitoring, CORS, rate limiting, and error handling
+Includes Sentry monitoring, CORS, rate limiting, error handling, and background jobs
 """
 
 import sentry_sdk
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import Limiter, _rate_limit_exceeded_handler
@@ -14,8 +15,27 @@ from app.config import get_settings
 from app.middleware.error_handler import add_error_handlers
 from app.middleware.timeout import TimeoutMiddleware
 from app.routes import estimates, health, materials, payments, workers, workers_search
+from app.services.background_jobs import start_background_jobs, stop_background_jobs
 
 settings = get_settings()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    Application lifespan manager for startup and shutdown events.
+
+    Startup:
+    - Start background job scheduler (if enabled)
+
+    Shutdown:
+    - Stop background job scheduler gracefully
+    """
+    # Startup
+    start_background_jobs()
+    yield
+    # Shutdown
+    stop_background_jobs()
 
 # Initialize Sentry for error tracking
 if settings.sentry_dsn:
@@ -29,7 +49,7 @@ if settings.sentry_dsn:
 # Initialize rate limiter
 limiter = Limiter(key_func=get_remote_address)
 
-# Create FastAPI application
+# Create FastAPI application with lifespan
 app = FastAPI(
     title=settings.api_title,
     version=settings.api_version,
@@ -37,6 +57,7 @@ app = FastAPI(
     debug=settings.debug,
     docs_url="/docs" if settings.debug else None,
     redoc_url="/redoc" if settings.debug else None,
+    lifespan=lifespan,
 )
 
 # Add rate limiter to app state

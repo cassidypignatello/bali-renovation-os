@@ -48,6 +48,9 @@ class Settings(BaseSettings):
     # CORS
     cors_origins: list[str] = ["http://localhost:3000", "http://localhost:5173"]
 
+    # Background Jobs
+    enable_background_jobs: bool = False  # Set to True in production
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
