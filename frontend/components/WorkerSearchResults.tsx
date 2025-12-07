@@ -1,11 +1,12 @@
 'use client';
 
+import { useState } from 'react';
 import { TrustLevel, type WorkerPreview } from '@/lib/types';
+import { PaymentModal } from './PaymentModal';
 
 interface WorkerSearchResultsProps {
   workers: WorkerPreview[];
   unlockPriceIdr: number;
-  onUnlockWorker?: (workerId: string) => void;
 }
 
 const TRUST_LEVEL_COLORS: Record<TrustLevel, string> = {
@@ -18,8 +19,10 @@ const TRUST_LEVEL_COLORS: Record<TrustLevel, string> = {
 export function WorkerSearchResults({
   workers,
   unlockPriceIdr,
-  onUnlockWorker,
 }: WorkerSearchResultsProps) {
+  const [selectedWorker, setSelectedWorker] = useState<WorkerPreview | null>(null);
+  const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
+
   if (workers.length === 0) {
     return null;
   }
@@ -30,6 +33,16 @@ export function WorkerSearchResults({
       currency: 'IDR',
       minimumFractionDigits: 0,
     }).format(priceIdr);
+  };
+
+  const handleUnlockClick = (worker: WorkerPreview) => {
+    setSelectedWorker(worker);
+    setIsPaymentModalOpen(true);
+  };
+
+  const handleCloseModal = () => {
+    setIsPaymentModalOpen(false);
+    setSelectedWorker(null);
   };
 
   return (
@@ -105,7 +118,7 @@ export function WorkerSearchResults({
 
             {worker.contact_locked && (
               <button
-                onClick={() => onUnlockWorker?.(worker.id)}
+                onClick={() => handleUnlockClick(worker)}
                 className="px-4 py-2 bg-blue-600 text-white text-sm font-semibold rounded-lg hover:bg-blue-700 transition-colors"
               >
                 Unlock Contact - {formatPrice(worker.unlock_price_idr)}
@@ -127,6 +140,17 @@ export function WorkerSearchResults({
           and AI-powered negotiation tips for {formatPrice(unlockPriceIdr)} per worker.
         </p>
       </div>
+
+      {/* Payment Modal */}
+      {selectedWorker && (
+        <PaymentModal
+          workerId={selectedWorker.id}
+          workerName={selectedWorker.preview_name}
+          unlockPrice={selectedWorker.unlock_price_idr}
+          isOpen={isPaymentModalOpen}
+          onClose={handleCloseModal}
+        />
+      )}
     </div>
   );
 }
