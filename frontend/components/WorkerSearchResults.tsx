@@ -1,6 +1,6 @@
 'use client';
 
-import type { WorkerPreview, TrustLevel } from '@/lib/types';
+import { TrustLevel, type WorkerPreview } from '@/lib/types';
 
 interface WorkerSearchResultsProps {
   workers: WorkerPreview[];
