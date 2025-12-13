@@ -141,6 +141,89 @@ def get_apify_client() -> ApifyClient:
     return ApifyClient(settings.apify_token)
 
 
+def _extract_price(item: dict) -> int:
+    """
+    Extract price from various Tokopedia actor output formats.
+
+    Supports:
+    - 123webdata format: item.priceInt or item.price (int)
+    - jupri format: item.price.number (nested dict)
+    - Direct number formats
+
+    Args:
+        item: Product data from Apify actor
+
+    Returns:
+        int: Price in IDR, or 0 if not found
+    """
+    # Try priceInt field (123webdata)
+    if "priceInt" in item and item["priceInt"]:
+        return int(item["priceInt"])
+
+    # Try price field (multiple formats)
+    if "price" in item:
+        price = item["price"]
+        if isinstance(price, dict):  # jupri format: {number: 150000}
+            return int(price.get("number", 0))
+        elif isinstance(price, (int, float, str)):  # direct number or string
+            try:
+                return int(float(price))
+            except (ValueError, TypeError):
+                pass
+
+    return 0
+
+
+def _extract_rating(item: dict) -> float:
+    """
+    Extract rating from various formats.
+
+    Args:
+        item: Product data from Apify actor
+
+    Returns:
+        float: Rating (0.0-5.0), or 0.0 if not found
+    """
+    rating = item.get("rating", 0)
+    if isinstance(rating, (int, float)):
+        return float(rating)
+    elif isinstance(rating, str):
+        try:
+            return float(rating)
+        except ValueError:
+            return 0.0
+    return 0.0
+
+
+def _extract_sold_count(item: dict) -> int:
+    """
+    Extract sold count from various formats.
+
+    Args:
+        item: Product data from Apify actor
+
+    Returns:
+        int: Number of units sold, or 0 if not found
+    """
+    # Try direct sold field (123webdata)
+    if "sold" in item and item["sold"]:
+        try:
+            return int(item["sold"])
+        except (ValueError, TypeError):
+            pass
+
+    # Try nested stock.sold field (jupri)
+    if "stock" in item:
+        stock_data = item["stock"]
+        if isinstance(stock_data, dict) and "sold" in stock_data:
+            try:
+                return int(stock_data["sold"])
+            except (ValueError, TypeError):
+                pass
+
+    return 0
+
+
 @with_circuit_breaker("apify")
 @retry(
     stop=stop_after_attempt(2),
@@ -195,23 +278,21 @@ async def scrape_tokopedia_prices(
     }
 
     try:
-        # Run Tokopedia scraper actor
-        run = client.actor("jupri/tokopedia-scraper").call(run_input=run_input)
+        # Run Tokopedia scraper actor (pay-per-result: $0.005/result)
+        # Changed from jupri/tokopedia-scraper ($30/month rental) for cost optimization
+        run = client.actor("123webdata/tokopedia-scraper").call(run_input=run_input)
 
         # Fetch results from dataset
         results = []
         for item in client.dataset(run["defaultDatasetId"]).iterate_items():
-            # Extract price from nested structure: price.number
-            price_data = item.get("price", {})
-            price_idr = price_data.get("number", 0) if isinstance(price_data, dict) else 0
+            # Extract price - supports multiple Tokopedia actor formats
+            price_idr = _extract_price(item)
 
-            # Rating comes as string (e.g., "4.8"), convert to float
-            rating_str = item.get("rating", "0")
-            rating = float(rating_str) if rating_str else 0.0
+            # Extract rating - supports both string and float formats
+            rating = _extract_rating(item)
 
-            # Sold count is in stock.sold
-            stock_data = item.get("stock", {})
-            sold_count = stock_data.get("sold", 0) if isinstance(stock_data, dict) else 0
+            # Extract sold count - supports multiple formats
+            sold_count = _extract_sold_count(item)
 
             results.append(
                 {
