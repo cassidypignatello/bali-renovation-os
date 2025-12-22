@@ -65,22 +65,13 @@ async def get_estimate_status(request: Request, estimate_id: str):
             status_code=status.HTTP_404_NOT_FOUND, detail="Estimate not found"
         )
 
-    # Map database status to estimate status
-    db_status = project_data.get("status", "draft")
-    status_mapping = {
-        "draft": "pending",
-        "processing": "processing",
-        "estimated": "completed",
-        "unlocked": "completed",
-        "completed": "completed",
-    }
-    estimate_status = status_mapping.get(db_status, "pending")
-
-    # Get progress from price_range JSONB field (updated during processing)
+    # Get progress and status from price_range JSONB field (updated during processing)
     price_range = project_data.get("price_range")
+    db_status = project_data.get("status", "draft")
     progress = 0
     error_message = None
     step_message = None
+    estimate_status = "pending"
 
     if isinstance(price_range, dict):
         # Check for errors first
@@ -88,8 +79,9 @@ async def get_estimate_status(request: Request, estimate_id: str):
             error_message = price_range.get("error")
             estimate_status = "failed"
             progress = 0
-        else:
-            # Get progress from the processing updates
+        elif price_range.get("status") == "processing":
+            # Currently processing - read progress from price_range
+            estimate_status = "processing"
             progress = price_range.get("progress", 0)
             step = price_range.get("step", "")
 
@@ -101,11 +93,17 @@ async def get_estimate_status(request: Request, estimate_id: str):
                 "completed": "Estimate complete!",
             }
             step_message = step_messages.get(step)
+        elif price_range.get("step") == "completed":
+            estimate_status = "completed"
+            progress = 100
 
-    # Override progress for terminal states
-    if estimate_status == "completed":
+    # Map database status to estimate status for terminal states
+    if db_status in ("estimated", "unlocked", "completed"):
+        estimate_status = "completed"
         progress = 100
-    elif estimate_status == "pending" and progress == 0:
+    elif db_status == "draft" and not isinstance(price_range, dict):
+        # Fresh draft with no progress yet
+        estimate_status = "pending"
         progress = 0
 
     return EstimateStatusResponse(

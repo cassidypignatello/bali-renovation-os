@@ -69,11 +69,12 @@ async def process_estimate(estimate_id: str, project: ProjectInput) -> None:
     settings = get_settings()
 
     try:
-        # Update status to "processing" so frontend shows progress
+        # Update progress (keep status as "draft" since "processing" isn't in DB enum)
+        # Frontend reads progress from price_range JSONB field
         await update_project_status(
             estimate_id,
-            "processing",
-            price_range={"step": "generating_bom", "progress": 10},
+            "draft",
+            price_range={"step": "generating_bom", "progress": 10, "status": "processing"},
         )
 
         # Step 1: Generate BOM using GPT-4o-mini
@@ -88,8 +89,8 @@ async def process_estimate(estimate_id: str, project: ProjectInput) -> None:
         # Update progress after BOM generation
         await update_project_status(
             estimate_id,
-            "processing",
-            price_range={"step": "fetching_prices", "progress": 30, "bom_count": len(raw_bom)},
+            "draft",
+            price_range={"step": "fetching_prices", "progress": 30, "bom_count": len(raw_bom), "status": "processing"},
         )
 
         # Step 2: Enrich with real-time prices (or mock data in dev mode)
@@ -102,8 +103,8 @@ async def process_estimate(estimate_id: str, project: ProjectInput) -> None:
         # Update progress after price enrichment
         await update_project_status(
             estimate_id,
-            "processing",
-            price_range={"step": "calculating_totals", "progress": 80},
+            "draft",
+            price_range={"step": "calculating_totals", "progress": 80, "status": "processing"},
         )
 
         # Step 3: Calculate totals

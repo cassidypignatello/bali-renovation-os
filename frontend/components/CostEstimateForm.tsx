@@ -19,8 +19,15 @@ export function CostEstimateForm({ onEstimateComplete }: CostEstimateFormProps) 
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    await createEstimate(formData);
-    onEstimateComplete?.();
+    e.stopPropagation(); // Prevent event bubbling
+
+    try {
+      await createEstimate(formData);
+      onEstimateComplete?.();
+    } catch (error) {
+      // Error handling is done in the hook
+      console.error('Form submission error:', error);
+    }
   };
 
   const handleChange = (
@@ -53,7 +60,7 @@ export function CostEstimateForm({ onEstimateComplete }: CostEstimateFormProps) 
             name="project_type"
             value={formData.project_type}
             onChange={handleChange}
-            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-black"
             required
           >
             <option value="">Select a project type...</option>
@@ -78,7 +85,7 @@ export function CostEstimateForm({ onEstimateComplete }: CostEstimateFormProps) 
             placeholder="Describe your project in detail (minimum 10 characters)..."
             rows={4}
             minLength={10}
-            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-black"
             required
           />
         </div>
@@ -94,7 +101,7 @@ export function CostEstimateForm({ onEstimateComplete }: CostEstimateFormProps) 
             value={formData.location}
             onChange={handleChange}
             placeholder="e.g., Canggu, Ubud"
-            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-black"
           />
         </div>
 
