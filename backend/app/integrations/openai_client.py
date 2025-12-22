@@ -23,13 +23,22 @@ Guidelines:
 3. Consider Bali-specific climate, regulations, and construction practices
 4. Include all necessary materials: structural, finishing, electrical, plumbing
 5. Be comprehensive but avoid redundancy
-6. Provide material names that can be easily searched on Indonesian marketplaces
+
+CRITICAL - Material Naming Rules for Indonesian Marketplace Search:
+- Use INDONESIAN product names that shoppers actually search for on Tokopedia
+- Use common brand names or generic Indonesian terms (e.g., "Semen Tiga Roda" not "Portland Cement Type I")
+- Keep names SHORT (2-4 words maximum) - avoid long technical descriptions
+- Use Indonesian spelling: "keramik" not "ceramic", "besi" not "iron", "pipa" not "pipe"
+- Include size/spec ONLY if commonly searched (e.g., "Besi Beton 10mm" not "Besi Beton Ulir Diameter 10mm Grade 40")
+- AVOID: English terms, technical specifications (MPa, PSI), overly specific dimensions
+- GOOD examples: "Semen 50kg", "Keramik 40x40", "Besi Beton 12mm", "Cat Tembok Dulux", "Pipa PVC 4 inch"
+- BAD examples: "Campuran Beton 25 MPa", "Membran Waterproofing Bitumen 1mm", "Keramik Ubin Kolam 20x20cm Grade A"
 
 Output Format:
 Return a JSON array of materials with this structure:
 [
   {
-    "material_name": "Ceramic Tiles 40x40cm - Grade A",
+    "material_name": "Keramik 40x40",
     "quantity": 25.0,
     "unit": "m2",
     "category": "finishing",
@@ -134,25 +143,91 @@ async def enhance_material_description(material_name: str, context: str = "") ->
     """
     client = get_openai_client()
 
-    prompt = f"""Convert this construction material name into a search-friendly term for Indonesian e-commerce:
+    prompt = f"""Convert this construction material into a Tokopedia search term that Indonesian shoppers actually use.
 
 Material: {material_name}
 {f'Context: {context}' if context else ''}
 
-Return only the enhanced search term, optimized for Tokopedia/Indonesian marketplaces.
-Keep it concise (2-5 words) and include relevant specs."""
+Rules:
+- Use Indonesian words (keramik, semen, besi, pipa, cat)
+- Maximum 3-4 words
+- Include brand if common (Dulux, Tiga Roda, Wavin)
+- Include size only if essential (40x40, 12mm, 4 inch)
+- Remove technical specs (MPa, PSI, Grade A)
+- Remove English words
+
+Examples:
+- "Campuran Beton 25 MPa" → "Semen 50kg"
+- "Membran Waterproofing Bitumen" → "Waterproofing"
+- "Ceramic Tiles 40x40cm Grade A" → "Keramik 40x40"
+- "PVC Pipe 4 inch Schedule 40" → "Pipa PVC 4 inch"
+
+Return ONLY the search term, nothing else."""
 
     try:
         response = await client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[{"role": "user", "content": prompt}],
-            temperature=0.3,
-            max_tokens=50,
+            temperature=0.2,
+            max_tokens=30,
         )
 
         enhanced = response.choices[0].message.content
-        return enhanced.strip() if enhanced else material_name
+        return enhanced.strip().strip('"').strip("'") if enhanced else material_name
 
     except Exception:
-        # Fallback to original name on error
-        return material_name
+        # Fallback to simplified name
+        return _simplify_material_name(material_name)
+
+
+def _simplify_material_name(name: str) -> str:
+    """
+    Simple fallback to extract core material name without API call.
+
+    Removes common technical terms and keeps just the base material.
+    """
+    # Common technical terms to remove
+    remove_terms = [
+        "grade a", "grade b", "grade c", "type i", "type ii",
+        "mpa", "psi", "mm", "cm", "meter", "kg", "liter",
+        "premium", "standard", "heavy duty", "high quality",
+        "professional", "industrial", "commercial",
+    ]
+
+    # Indonesian translations for common English terms
+    translations = {
+        "cement": "semen",
+        "concrete": "beton",
+        "ceramic": "keramik",
+        "tile": "keramik",
+        "tiles": "keramik",
+        "iron": "besi",
+        "steel": "baja",
+        "pipe": "pipa",
+        "paint": "cat",
+        "wood": "kayu",
+        "sand": "pasir",
+        "gravel": "kerikil",
+        "brick": "batu bata",
+        "glass": "kaca",
+        "door": "pintu",
+        "window": "jendela",
+        "roof": "atap",
+        "floor": "lantai",
+        "wall": "dinding",
+        "waterproofing": "waterproofing",
+        "membrane": "membran",
+    }
+
+    result = name.lower()
+
+    # Remove technical terms
+    for term in remove_terms:
+        result = result.replace(term, "")
+
+    # Translate common English words
+    for eng, ind in translations.items():
+        result = result.replace(eng, ind)
+
+    # Clean up extra spaces and return
+    return " ".join(result.split())[:50]  # Max 50 chars

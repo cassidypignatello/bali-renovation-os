@@ -5,6 +5,7 @@ Bill of Materials (BOM) generation service using GPT-4o-mini
 import uuid
 from datetime import datetime
 
+from app.config import get_settings
 from app.integrations.openai_client import generate_bom
 from app.integrations.supabase import save_project, update_project_status
 from app.schemas.estimate import BOMItem, EstimateResponse, EstimateStatus
@@ -65,7 +66,16 @@ async def process_estimate(estimate_id: str, project: ProjectInput) -> None:
     Raises:
         Exception: If processing fails
     """
+    settings = get_settings()
+
     try:
+        # Update status to "processing" so frontend shows progress
+        await update_project_status(
+            estimate_id,
+            "processing",
+            price_range={"step": "generating_bom", "progress": 10},
+        )
+
         # Step 1: Generate BOM using GPT-4o-mini
         project_dict = {
             "project_type": project.project_type.value,
@@ -75,8 +85,26 @@ async def process_estimate(estimate_id: str, project: ProjectInput) -> None:
 
         raw_bom = await generate_bom(project_dict)
 
-        # Step 2: Enrich with real-time prices
-        enriched_bom = await enrich_bom_with_prices(raw_bom)
+        # Update progress after BOM generation
+        await update_project_status(
+            estimate_id,
+            "processing",
+            price_range={"step": "fetching_prices", "progress": 30, "bom_count": len(raw_bom)},
+        )
+
+        # Step 2: Enrich with real-time prices (or mock data in dev mode)
+        if settings.debug and settings.use_mock_prices:
+            # Use mock prices in development to avoid Apify costs
+            enriched_bom = await _mock_enrich_bom(raw_bom)
+        else:
+            enriched_bom = await enrich_bom_with_prices(raw_bom)
+
+        # Update progress after price enrichment
+        await update_project_status(
+            estimate_id,
+            "processing",
+            price_range={"step": "calculating_totals", "progress": 80},
+        )
 
         # Step 3: Calculate totals
         bom_items = []
@@ -109,6 +137,7 @@ async def process_estimate(estimate_id: str, project: ProjectInput) -> None:
             material_total=total_cost,
             labor_total=labor_cost,
             total_estimate=grand_total,
+            price_range={"step": "completed", "progress": 100},
         )
 
     except Exception as e:
@@ -119,3 +148,45 @@ async def process_estimate(estimate_id: str, project: ProjectInput) -> None:
             price_range={"error": str(e), "status": "failed"},
         )
         raise
+
+
+async def _mock_enrich_bom(bom_items: list[dict]) -> list[dict]:
+    """
+    Mock price enrichment for development/testing without Apify costs.
+
+    Uses realistic price estimates based on material category.
+    """
+    import random
+
+    category_prices = {
+        "structural": {"base": 150000, "variance": 50000},
+        "finishing": {"base": 100000, "variance": 30000},
+        "electrical": {"base": 75000, "variance": 25000},
+        "plumbing": {"base": 120000, "variance": 40000},
+        "hvac": {"base": 500000, "variance": 200000},
+        "landscaping": {"base": 80000, "variance": 30000},
+        "fixtures": {"base": 200000, "variance": 100000},
+        "miscellaneous": {"base": 50000, "variance": 20000},
+    }
+
+    enriched = []
+    for item in bom_items:
+        category = item.get("category", "miscellaneous").lower()
+        prices = category_prices.get(category, category_prices["miscellaneous"])
+
+        unit_price = prices["base"] + random.randint(-prices["variance"], prices["variance"])
+        quantity = item.get("quantity", 1)
+        total_price = int(unit_price * quantity)
+
+        enriched.append({
+            "material_name": item["material_name"],
+            "quantity": quantity,
+            "unit": item.get("unit", "pcs"),
+            "unit_price_idr": unit_price,
+            "total_price_idr": total_price,
+            "source": "mock_data",
+            "confidence": 0.5,
+            "marketplace_url": None,
+        })
+
+    return enriched

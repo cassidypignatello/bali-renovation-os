@@ -13,7 +13,7 @@ from app.services.bom_generator import create_estimate, process_estimate
 router = APIRouter()
 
 
-@router.post("/", status_code=status.HTTP_202_ACCEPTED)
+@router.post("", status_code=status.HTTP_202_ACCEPTED)
 @limiter.limit(HEAVY_LIMIT)
 async def create_cost_estimate(
     request: Request, project: ProjectInput, background_tasks: BackgroundTasks
@@ -69,34 +69,50 @@ async def get_estimate_status(request: Request, estimate_id: str):
     db_status = project_data.get("status", "draft")
     status_mapping = {
         "draft": "pending",
+        "processing": "processing",
         "estimated": "completed",
         "unlocked": "completed",
         "completed": "completed",
     }
     estimate_status = status_mapping.get(db_status, "pending")
 
-    # Calculate progress based on status
-    status_progress = {
-        "pending": 0,
-        "processing": 50,
-        "completed": 100,
-        "failed": 0,
-    }
-
-    progress = status_progress.get(estimate_status, 0)
-
-    # Check for errors in price_range JSONB
-    error_message = None
+    # Get progress from price_range JSONB field (updated during processing)
     price_range = project_data.get("price_range")
-    if isinstance(price_range, dict) and price_range.get("status") == "failed":
-        error_message = price_range.get("error")
-        estimate_status = "failed"
+    progress = 0
+    error_message = None
+    step_message = None
+
+    if isinstance(price_range, dict):
+        # Check for errors first
+        if price_range.get("status") == "failed":
+            error_message = price_range.get("error")
+            estimate_status = "failed"
+            progress = 0
+        else:
+            # Get progress from the processing updates
+            progress = price_range.get("progress", 0)
+            step = price_range.get("step", "")
+
+            # Provide user-friendly step messages
+            step_messages = {
+                "generating_bom": "Generating Bill of Materials...",
+                "fetching_prices": f"Fetching prices for {price_range.get('bom_count', 0)} materials...",
+                "calculating_totals": "Calculating totals...",
+                "completed": "Estimate complete!",
+            }
+            step_message = step_messages.get(step)
+
+    # Override progress for terminal states
+    if estimate_status == "completed":
+        progress = 100
+    elif estimate_status == "pending" and progress == 0:
+        progress = 0
 
     return EstimateStatusResponse(
         estimate_id=estimate_id,
         status=estimate_status,
         progress_percentage=progress,
-        message=error_message,
+        message=error_message or step_message,
     )
 
 

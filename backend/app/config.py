@@ -51,6 +51,9 @@ class Settings(BaseSettings):
     # Background Jobs
     enable_background_jobs: bool = False  # Set to True in production
 
+    # Development/Testing Options
+    use_mock_prices: bool = False  # Set to True to skip Apify and use mock price data
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

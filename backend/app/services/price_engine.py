@@ -6,6 +6,8 @@ Uses quality-based filtering to prioritize reliable sellers.
 Designed for future multi-source aggregation (Shopee, local stores, etc.)
 """
 
+import re
+
 from app.integrations.apify import get_best_price, scrape_tokopedia_prices
 from app.services.semantic_matcher import enhance_search_term, match_material
 
@@ -54,6 +56,13 @@ async def enrich_single_material(material: dict) -> dict:
 
         # Fetch more results for quality filtering (will filter down)
         products = await scrape_tokopedia_prices(search_term, max_results=10)
+
+        # If no products found, try with simplified search term
+        if not products:
+            simplified_term = _extract_core_material(material_name)
+            if simplified_term != search_term:
+                print(f"Retrying with simplified term: '{simplified_term}' (was: '{search_term}')")
+                products = await scrape_tokopedia_prices(simplified_term, max_results=10)
 
         if products:
             # Get best price using quality-based filtering
@@ -123,6 +132,74 @@ async def enrich_bom_with_prices(bom_items: list[dict]) -> list[dict]:
         enriched.append(enriched_item)
 
     return enriched
+
+
+def _extract_core_material(name: str) -> str:
+    """
+    Extract the core material name for fallback search.
+
+    Simplifies technical names to basic Indonesian search terms.
+    Example: "Campuran Beton 25 MPa" -> "beton" or "semen"
+    """
+    # Common material mappings to simple Indonesian search terms
+    material_keywords = {
+        # Structural
+        "beton": "semen",
+        "concrete": "semen",
+        "semen": "semen 50kg",
+        "cement": "semen 50kg",
+        "besi": "besi beton",
+        "iron": "besi beton",
+        "steel": "besi beton",
+        "baja": "baja ringan",
+        # Finishing
+        "keramik": "keramik lantai",
+        "ceramic": "keramik lantai",
+        "tile": "keramik lantai",
+        "cat": "cat tembok",
+        "paint": "cat tembok",
+        "granit": "granit lantai",
+        "granite": "granit lantai",
+        # Plumbing
+        "pipa": "pipa pvc",
+        "pipe": "pipa pvc",
+        "kran": "kran air",
+        "faucet": "kran air",
+        "closet": "closet duduk",
+        "toilet": "closet duduk",
+        # Waterproofing
+        "waterproof": "waterproofing",
+        "membran": "waterproofing",
+        "membrane": "waterproofing",
+        "bitumen": "waterproofing",
+        # Electrical
+        "kabel": "kabel listrik",
+        "cable": "kabel listrik",
+        "lampu": "lampu led",
+        "lamp": "lampu led",
+        "light": "lampu led",
+        "saklar": "saklar",
+        "switch": "saklar",
+        # Pool specific
+        "kolam": "keramik kolam",
+        "pool": "keramik kolam",
+        "filter": "filter kolam",
+        "pompa": "pompa air",
+        "pump": "pompa air",
+    }
+
+    name_lower = name.lower()
+
+    # Try to find a matching keyword
+    for keyword, search_term in material_keywords.items():
+        if keyword in name_lower:
+            return search_term
+
+    # Fallback: extract first 2 words and remove numbers/specs
+    words = re.sub(r"[0-9]+[a-zA-Z]*", "", name_lower).split()
+    core_words = [w for w in words[:2] if len(w) > 2]
+
+    return " ".join(core_words) if core_words else name[:20]
 
 
 def estimate_price_fallback(material: dict) -> int:
