@@ -224,6 +224,30 @@ def _extract_sold_count(item: dict) -> int:
     return 0
 
 
+def _build_tokopedia_search_url(material_name: str) -> str:
+    """
+    Build Tokopedia search URL from material name.
+
+    The 123webdata/tokopedia-scraper actor requires actual URLs, not search queries.
+    We construct search result URLs that the actor can scrape.
+
+    Args:
+        material_name: Material to search for
+
+    Returns:
+        str: Tokopedia search URL
+    """
+    import urllib.parse
+
+    # Clean and encode search term
+    search_term = material_name.strip()
+    encoded_term = urllib.parse.quote_plus(search_term)
+
+    # Construct Tokopedia search URL
+    # Format: https://www.tokopedia.com/search?q=<search_term>
+    return f"https://www.tokopedia.com/search?q={encoded_term}"
+
+
 @with_circuit_breaker("apify")
 @retry(
     stop=stop_after_attempt(2),
@@ -271,10 +295,16 @@ async def scrape_tokopedia_prices(
 
     client = get_apify_client()
 
+    # Build Tokopedia search URL - 123webdata actor requires URLs, not queries
+    search_url = _build_tokopedia_search_url(material_name)
+
     # Configure scraping task for Tokopedia
+    # Note: 123webdata/tokopedia-scraper requires categoryUrls or productUrls
+    # We provide a search results URL which it can scrape
     run_input = {
-        "query": [material_name],
-        "limit": max_results,
+        "categoryUrls": [search_url],
+        "maxResultsPerScrape": max_results,
+        "usePagination": False,  # Don't paginate for cost optimization
     }
 
     try:

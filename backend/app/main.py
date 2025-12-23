@@ -58,6 +58,7 @@ app = FastAPI(
     docs_url="/docs" if settings.debug else None,
     redoc_url="/redoc" if settings.debug else None,
     lifespan=lifespan,
+    redirect_slashes=False,  # Prevent 307 redirects for trailing slash mismatches
 )
 
 # Add rate limiter to app state
