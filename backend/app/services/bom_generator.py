@@ -11,6 +11,7 @@ from app.integrations.supabase import save_project, update_project_status
 from app.schemas.estimate import BOMItem, EstimateResponse, EstimateStatus
 from app.schemas.project import ProjectInput
 from app.services.price_engine import enrich_bom_with_prices
+from app.utils.affiliate import generate_affiliate_url
 
 
 async def create_estimate(project: ProjectInput) -> EstimateResponse:
@@ -112,15 +113,18 @@ async def process_estimate(estimate_id: str, project: ProjectInput) -> None:
         total_cost = 0
 
         for item in enriched_bom:
+            marketplace_url = item.get("marketplace_url")
             bom_item = BOMItem(
                 material_name=item["material_name"],
+                english_name=item.get("english_name"),
                 quantity=item["quantity"],
                 unit=item["unit"],
                 unit_price_idr=item["unit_price_idr"],
                 total_price_idr=item["total_price_idr"],
                 source=item["source"],
                 confidence=item["confidence"],
-                marketplace_url=item.get("marketplace_url"),
+                marketplace_url=marketplace_url,
+                affiliate_url=generate_affiliate_url(marketplace_url),
             )
             bom_items.append(bom_item)
             total_cost += item["total_price_idr"]
@@ -156,8 +160,10 @@ async def _mock_enrich_bom(bom_items: list[dict]) -> list[dict]:
     Mock price enrichment for development/testing without Apify costs.
 
     Uses realistic price estimates based on material category.
+    Generates sample Tokopedia search URLs for testing the shopping list UI.
     """
     import random
+    from urllib.parse import quote
 
     category_prices = {
         "structural": {"base": 150000, "variance": 50000},
@@ -179,15 +185,20 @@ async def _mock_enrich_bom(bom_items: list[dict]) -> list[dict]:
         quantity = item.get("quantity", 1)
         total_price = int(unit_price * quantity)
 
+        # Generate mock Tokopedia search URL for testing the shopping list UI
+        search_term = quote(item["material_name"])
+        mock_url = f"https://www.tokopedia.com/search?q={search_term}"
+
         enriched.append({
             "material_name": item["material_name"],
+            "english_name": item.get("english_name"),  # Pass through from OpenAI
             "quantity": quantity,
             "unit": item.get("unit", "pcs"),
             "unit_price_idr": unit_price,
             "total_price_idr": total_price,
             "source": "mock_data",
             "confidence": 0.5,
-            "marketplace_url": None,
+            "marketplace_url": mock_url,
         })
 
     return enriched

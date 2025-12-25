@@ -40,6 +40,7 @@ async def enrich_single_material(material: dict) -> dict:
 
         return {
             "material_name": material_name,
+            "english_name": material.get("english_name"),  # Pass through from OpenAI
             "quantity": quantity,
             "unit": material["unit"],
             "unit_price_idr": unit_price,
@@ -85,6 +86,7 @@ async def enrich_single_material(material: dict) -> dict:
 
                 return {
                     "material_name": material_name,
+                    "english_name": material.get("english_name"),  # Pass through from OpenAI
                     "quantity": quantity,
                     "unit": material["unit"],
                     "unit_price_idr": unit_price,
@@ -105,6 +107,7 @@ async def enrich_single_material(material: dict) -> dict:
 
     return {
         "material_name": material_name,
+        "english_name": material.get("english_name"),  # Pass through from OpenAI
         "quantity": quantity,
         "unit": material["unit"],
         "unit_price_idr": estimated_price,

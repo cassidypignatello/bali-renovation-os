@@ -22,7 +22,8 @@ class BOMItem(BaseModel):
     Single Bill of Materials item with pricing and metadata
 
     Attributes:
-        material_name: Name of the material or item
+        material_name: Indonesian name for Tokopedia search (e.g., 'Semen 50kg')
+        english_name: English name for user display (e.g., 'Cement 50kg')
         quantity: Amount needed
         unit: Unit of measurement (e.g., 'm2', 'pcs', 'kg')
         unit_price_idr: Price per unit in Indonesian Rupiah
@@ -32,7 +33,8 @@ class BOMItem(BaseModel):
         marketplace_url: Optional link to product on marketplace
     """
 
-    material_name: str = Field(..., description="Material or item name")
+    material_name: str = Field(..., description="Indonesian material name for marketplace search")
+    english_name: str | None = Field(None, description="English material name for user display")
     quantity: float = Field(..., gt=0, description="Quantity needed")
     unit: str = Field(..., description="Unit of measurement", examples=["m2", "pcs", "kg", "liter"])
     unit_price_idr: int = Field(..., ge=0, description="Price per unit in IDR")
@@ -44,6 +46,9 @@ class BOMItem(BaseModel):
     )
     confidence: float = Field(..., ge=0.0, le=1.0, description="Price confidence score")
     marketplace_url: str | None = Field(None, description="Product URL if available")
+    affiliate_url: str | None = Field(
+        None, description="Product URL with affiliate tracking for monetization"
+    )
 
 
 class EstimateResponse(BaseModel):
@@ -84,7 +89,8 @@ class EstimateResponse(BaseModel):
                 "project_type": "bathroom_renovation",
                 "bom_items": [
                     {
-                        "material_name": "Ceramic Tiles 40x40cm",
+                        "material_name": "Keramik 40x40",
+                        "english_name": "Ceramic Tiles 40x40cm",
                         "quantity": 25.0,
                         "unit": "m2",
                         "unit_price_idr": 150000,
@@ -92,6 +98,7 @@ class EstimateResponse(BaseModel):
                         "source": "tokopedia",
                         "confidence": 0.95,
                         "marketplace_url": "https://tokopedia.com/...",
+                        "affiliate_url": "https://tokopedia.com/...?extParam=aff_id%3D...",
                     }
                 ],
                 "total_cost_idr": 15000000,

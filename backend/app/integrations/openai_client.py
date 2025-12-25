@@ -24,21 +24,26 @@ Guidelines:
 4. Include all necessary materials: structural, finishing, electrical, plumbing
 5. Be comprehensive but avoid redundancy
 
-CRITICAL - Material Naming Rules for Indonesian Marketplace Search:
-- Use INDONESIAN product names that shoppers actually search for on Tokopedia
-- Use common brand names or generic Indonesian terms (e.g., "Semen Tiga Roda" not "Portland Cement Type I")
-- Keep names SHORT (2-4 words maximum) - avoid long technical descriptions
-- Use Indonesian spelling: "keramik" not "ceramic", "besi" not "iron", "pipa" not "pipe"
-- Include size/spec ONLY if commonly searched (e.g., "Besi Beton 10mm" not "Besi Beton Ulir Diameter 10mm Grade 40")
-- AVOID: English terms, technical specifications (MPa, PSI), overly specific dimensions
-- GOOD examples: "Semen 50kg", "Keramik 40x40", "Besi Beton 12mm", "Cat Tembok Dulux", "Pipa PVC 4 inch"
-- BAD examples: "Campuran Beton 25 MPa", "Membran Waterproofing Bitumen 1mm", "Keramik Ubin Kolam 20x20cm Grade A"
+CRITICAL - Material Naming Rules (BILINGUAL OUTPUT REQUIRED):
+1. material_name: INDONESIAN product names for Tokopedia marketplace search
+   - Use common brand names or generic Indonesian terms (e.g., "Semen Tiga Roda" not "Portland Cement Type I")
+   - Keep names SHORT (2-4 words maximum) - avoid long technical descriptions
+   - Use Indonesian spelling: "keramik" not "ceramic", "besi" not "iron", "pipa" not "pipe"
+   - Include size/spec ONLY if commonly searched (e.g., "Besi Beton 10mm")
+   - GOOD: "Semen 50kg", "Keramik 40x40", "Besi Beton 12mm", "Cat Tembok Dulux"
+   - BAD: "Campuran Beton 25 MPa", "Membran Waterproofing Bitumen 1mm"
+
+2. english_name: ENGLISH translation for international users
+   - Clear, descriptive English name that explains what the material is
+   - Include specifications that help users understand the product
+   - GOOD: "Cement 50kg Bag", "Ceramic Floor Tiles 40x40cm", "Steel Rebar 12mm", "Wall Paint (Dulux)"
 
 Output Format:
 Return a JSON array of materials with this structure:
 [
   {
     "material_name": "Keramik 40x40",
+    "english_name": "Ceramic Floor Tiles 40x40cm",
     "quantity": 25.0,
     "unit": "m2",
     "category": "finishing",
