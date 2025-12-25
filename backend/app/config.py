@@ -33,6 +33,9 @@ class Settings(BaseSettings):
     # Security
     field_encryption_key: str
 
+    # Affiliate Marketing
+    tokopedia_affiliate_id: str | None = None  # Set in production for affiliate tracking
+
     # Observability
     sentry_dsn: str | None = None
 
