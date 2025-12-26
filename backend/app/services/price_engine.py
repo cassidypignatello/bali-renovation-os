@@ -67,8 +67,9 @@ async def enrich_single_material(material: dict) -> dict:
 
         if products:
             # Get best price using quality-based filtering
-            # Filters unreliable sellers, uses median of trusted products
-            price_result = get_best_price(products)
+            # Filters unreliable sellers and products with insufficient stock
+            # Uses median of trusted products that can fulfill the BOM quantity
+            price_result = get_best_price(products, required_quantity=quantity)
 
             if price_result["price_idr"] > 0:
                 unit_price = price_result["price_idr"]

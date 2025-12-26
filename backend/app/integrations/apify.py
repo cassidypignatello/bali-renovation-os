@@ -112,25 +112,32 @@ def score_best_seller(product: dict, min_price: int, max_price: int) -> BestSell
     )
 
 
-def _is_product_available(product: dict) -> bool:
+def _is_product_available(product: dict, required_quantity: float = None) -> bool:
     """
-    Check if product is available for purchase.
+    Check if product is available for purchase with sufficient stock.
 
     Filters out products that are:
     - Out of stock (stock = 0)
     - Not active status
+    - Insufficient stock for required quantity (if specified)
 
     Args:
         product: Product dict from Tokopedia scrape
+        required_quantity: Minimum stock needed (from BOM). If None, only checks > 0.
 
     Returns:
-        bool: True if product is available, False otherwise
+        bool: True if product is available with sufficient stock, False otherwise
     """
     # Check stock - handle various field names
     stock = product.get("stock", product.get("stockCount", product.get("stock_count")))
     if stock is not None:
         try:
-            if int(stock) <= 0:
+            stock_int = int(stock)
+            # Must have at least 1 in stock
+            if stock_int <= 0:
+                return False
+            # Must have enough stock for the required quantity
+            if required_quantity is not None and stock_int < required_quantity:
                 return False
         except (ValueError, TypeError):
             pass
@@ -143,17 +150,23 @@ def _is_product_available(product: dict) -> bool:
     return True
 
 
-def rank_best_sellers(products: list[dict], top_n: int = 5) -> list[BestSellerScore]:
+def rank_best_sellers(
+    products: list[dict],
+    top_n: int = 5,
+    required_quantity: float = None,
+) -> list[BestSellerScore]:
     """
     Rank products using weighted ranking algorithm and return top N.
 
     Filters out:
     - Products with stock = 0
     - Products with status != 'active'
+    - Products with insufficient stock for required_quantity (if specified)
 
     Args:
         products: List of product dicts from Tokopedia scrape
         top_n: Number of top products to return (default 5)
+        required_quantity: Minimum stock needed (from BOM). If None, only checks > 0.
 
     Returns:
         List of BestSellerScore objects, sorted by total_score descending
@@ -161,8 +174,10 @@ def rank_best_sellers(products: list[dict], top_n: int = 5) -> list[BestSellerSc
     if not products:
         return []
 
-    # Filter out unavailable products (out of stock or inactive)
-    available_products = [p for p in products if _is_product_available(p)]
+    # Filter out unavailable products (out of stock, inactive, or insufficient quantity)
+    available_products = [
+        p for p in products if _is_product_available(p, required_quantity)
+    ]
 
     if not available_products:
         return []
@@ -854,10 +869,12 @@ async def scrape_tokopedia_prices(
 
         # Tier 2: Supabase cache (persistent, 7-day freshness)
         try:
+            # Generate search URL for cache reference
+            tokopedia_search_url = _build_tokopedia_search_url(material_name)
             await save_material_price_cache(
                 material_name=material_name,
                 prices=results,
-                tokopedia_search=search_url,
+                tokopedia_search=tokopedia_search_url,
             )
         except Exception:
             # Supabase save failed, but we have results - continue
@@ -1073,7 +1090,7 @@ def calculate_median_price(products: list[dict]) -> int:
         return prices[mid]
 
 
-def get_best_price(products: list[dict]) -> dict:
+def get_best_price(products: list[dict], required_quantity: float = None) -> dict:
     """
     Get the best price from quality-filtered products.
 
@@ -1085,6 +1102,8 @@ def get_best_price(products: list[dict]) -> dict:
 
     Args:
         products: Raw product listings from scraper
+        required_quantity: Minimum stock needed (from BOM). Products with
+            insufficient stock are filtered out before quality scoring.
 
     Returns:
         dict: Price result with metadata
@@ -1105,8 +1124,17 @@ def get_best_price(products: list[dict]) -> dict:
             "products_qualified": 0,
         }
 
+    # Pre-filter by stock availability (including quantity check)
+    available_products = [
+        p for p in products if _is_product_available(p, required_quantity)
+    ]
+
+    # If no products have sufficient stock, fall back to all products
+    # (user will see "No link available" but we can still estimate price)
+    products_to_score = available_products if available_products else products
+
     # Filter to quality products
-    quality_products = filter_quality_products(products, min_score=0.3, top_n=5)
+    quality_products = filter_quality_products(products_to_score, min_score=0.3, top_n=5)
 
     if not quality_products:
         # Fallback to raw median if no quality products
