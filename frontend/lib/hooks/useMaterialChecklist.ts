@@ -69,6 +69,7 @@ export function useMaterialChecklist(bomItems: BOMItem[]): UseMaterialChecklistR
   const [items, setItems] = useState<ShoppingItem[]>([]);
 
   // Sync items when bomItems changes, preserving isPurchased state
+  // Sort by total_price_idr descending to prioritize high-value items for affiliate revenue
   useEffect(() => {
     setItems((prevItems) => {
       // Build a map of previous purchase states by item key
@@ -77,11 +78,19 @@ export function useMaterialChecklist(bomItems: BOMItem[]): UseMaterialChecklistR
         prevPurchaseState.set(item.id, item.isPurchased);
       }
 
+      // Sort by total price descending (most expensive first)
+      // This maximizes affiliate revenue capture as users may not complete all purchases
+      const sortedBomItems = [...bomItems].sort((a, b) => {
+        const priceA = Number(a.total_price_idr) || 0;
+        const priceB = Number(b.total_price_idr) || 0;
+        return priceB - priceA;
+      });
+
       // Track key occurrences to handle duplicate materials (same name + unit)
       const keyOccurrences = new Map<string, number>();
 
-      // Map new bomItems with stable content-based IDs
-      return bomItems.map((item) => {
+      // Map sorted bomItems with stable content-based IDs
+      return sortedBomItems.map((item) => {
         const baseKey = getItemKey(item);
         const occurrence = keyOccurrences.get(baseKey) ?? 0;
         keyOccurrences.set(baseKey, occurrence + 1);
