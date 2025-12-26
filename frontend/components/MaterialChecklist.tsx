@@ -81,15 +81,15 @@ export function MaterialChecklist({
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4 sm:space-y-6">
       {/* Header */}
-      <div className="flex justify-between items-start">
-        <div>
-          <h3 className="text-xl font-semibold text-gray-900">
+      <div className="flex justify-between items-start gap-2">
+        <div className="min-w-0">
+          <h3 className="text-lg sm:text-xl font-semibold text-gray-900">
             Materials Shopping List
           </h3>
           {projectType && (
-            <p className="text-sm text-gray-500 mt-1">
+            <p className="text-xs sm:text-sm text-gray-500 mt-0.5 sm:mt-1 truncate">
               {projectType.replace(/_/g, ' ')}
             </p>
           )}
@@ -97,21 +97,21 @@ export function MaterialChecklist({
         {purchasedCount > 0 && (
           <button
             onClick={resetProgress}
-            className="text-sm text-gray-500 hover:text-gray-700 underline"
+            className="flex-shrink-0 text-xs sm:text-sm text-gray-500 hover:text-gray-700 underline"
           >
-            Reset progress
+            Reset
           </button>
         )}
       </div>
 
       {/* Shopping Progress Bar */}
-      <div className="bg-gradient-to-r from-green-50 to-emerald-50 border border-green-200 rounded-lg p-4">
-        <div className="flex items-center justify-between mb-2">
-          <span className="text-green-800 font-medium flex items-center gap-2">
+      <div className="bg-gradient-to-r from-green-50 to-emerald-50 border border-green-200 rounded-lg p-3 sm:p-4">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1 sm:gap-0 mb-2">
+          <span className="text-green-800 font-medium flex items-center gap-2 text-sm sm:text-base">
             <ShoppingCartIcon />
             Shopping Progress
           </span>
-          <span className="text-green-600 font-semibold">
+          <span className="text-green-600 font-semibold text-sm sm:text-base">
             {purchasedCount} / {totalCount} items ({progressPercent}%)
           </span>
         </div>
@@ -130,7 +130,7 @@ export function MaterialChecklist({
       </div>
 
       {/* Materials List */}
-      <div className="space-y-3">
+      <div className="space-y-2 sm:space-y-3">
         {items.map((item) => (
           <MaterialItemRow
             key={item.id}
@@ -143,35 +143,35 @@ export function MaterialChecklist({
       </div>
 
       {/* Summary Card */}
-      <div className="bg-gradient-to-br from-blue-50 to-indigo-50 border border-blue-200 rounded-lg p-6">
-        <h4 className="font-semibold text-blue-900 mb-4 flex items-center gap-2">
+      <div className="bg-gradient-to-br from-blue-50 to-indigo-50 border border-blue-200 rounded-lg p-4 sm:p-6">
+        <h4 className="font-semibold text-blue-900 mb-3 sm:mb-4 flex items-center gap-2 text-sm sm:text-base">
           <CalculatorIcon />
           Cost Summary
         </h4>
-        <div className="space-y-3">
-          <div className="flex justify-between text-gray-700">
+        <div className="space-y-2 sm:space-y-3">
+          <div className="flex justify-between text-gray-700 text-sm sm:text-base">
             <span>Total Items:</span>
             <span className="font-medium">{totalCount} materials</span>
           </div>
-          <div className="flex justify-between text-gray-700">
+          <div className="flex justify-between text-gray-700 text-sm sm:text-base">
             <span>Items Purchased:</span>
             <span className="font-medium text-green-600">
               {purchasedCount} of {totalCount}
             </span>
           </div>
-          <div className="border-t border-blue-200 pt-3">
-            <div className="flex justify-between text-lg">
-              <span className="font-semibold text-blue-900">
-                Estimated Tokopedia Total:
+          <div className="border-t border-blue-200 pt-2 sm:pt-3">
+            <div className="flex flex-col sm:flex-row sm:justify-between gap-1 sm:gap-0">
+              <span className="font-semibold text-blue-900 text-sm sm:text-lg">
+                Estimated Total:
               </span>
-              <span className="font-bold text-blue-600">
+              <span className="font-bold text-blue-600 text-lg sm:text-xl">
                 {formatPrice(totalEstimatedCost)}
               </span>
             </div>
           </div>
         </div>
-        <p className="text-xs text-blue-600 mt-4">
-          * Prices are estimates based on current Tokopedia listings. Actual prices may vary.
+        <p className="text-xs text-blue-600 mt-3 sm:mt-4">
+          * Prices are estimates based on current Tokopedia listings.
         </p>
       </div>
     </div>
@@ -180,6 +180,7 @@ export function MaterialChecklist({
 
 /**
  * Individual material item row component
+ * Mobile-first responsive design: stacks vertically on small screens
  */
 function MaterialItemRow({
   item,
@@ -196,67 +197,76 @@ function MaterialItemRow({
 
   return (
     <div
-      className={`flex items-center gap-4 p-4 rounded-lg border transition-all ${
+      className={`p-3 sm:p-4 rounded-lg border transition-all ${
         item.isPurchased
           ? 'bg-green-50 border-green-200'
           : 'bg-white border-gray-200 hover:border-gray-300'
       }`}
     >
-      {/* Checkbox */}
-      <button
-        onClick={() => onTogglePurchased(item.id)}
-        className={`flex-shrink-0 w-6 h-6 rounded border-2 flex items-center justify-center transition-colors ${
-          item.isPurchased
-            ? 'bg-green-500 border-green-500 text-white'
-            : 'border-gray-300 hover:border-green-400'
-        }`}
-        aria-label={item.isPurchased ? 'Mark as not purchased' : 'Mark as purchased'}
-      >
-        {item.isPurchased && <CheckIcon />}
-      </button>
-
-      {/* Item Details - Bilingual Display */}
-      <div className="flex-1 min-w-0">
-        {/* English name prominently (for international users) */}
-        <p
-          className={`font-medium truncate ${
-            item.isPurchased ? 'text-green-800 line-through' : 'text-gray-900'
+      {/* Top row: Checkbox + Item name + Price (always horizontal) */}
+      <div className="flex items-start gap-3">
+        {/* Checkbox */}
+        <button
+          onClick={() => onTogglePurchased(item.id)}
+          className={`flex-shrink-0 w-5 h-5 sm:w-6 sm:h-6 mt-0.5 rounded border-2 flex items-center justify-center transition-colors ${
+            item.isPurchased
+              ? 'bg-green-500 border-green-500 text-white'
+              : 'border-gray-300 hover:border-green-400'
           }`}
+          aria-label={item.isPurchased ? 'Mark as not purchased' : 'Mark as purchased'}
         >
-          {item.english_name || item.material_name}
-        </p>
-        {/* Indonesian name for Tokopedia search context */}
-        {item.english_name && item.english_name !== item.material_name && (
-          <p className="text-xs text-gray-500 truncate mt-0.5">
-            🛒 Tokopedia: {item.material_name}
-          </p>
-        )}
-        <div className="flex items-center gap-3 text-sm text-gray-600 mt-1">
-          <span>
-            {item.quantity} {item.unit}
-          </span>
-          <span className="text-gray-400">|</span>
-          <span>{formatPrice(item.unit_price_idr)} / {item.unit}</span>
-        </div>
-      </div>
+          {item.isPurchased && <CheckIcon />}
+        </button>
 
-      {/* Price & Buy Button */}
-      <div className="flex items-center gap-4 flex-shrink-0">
-        <div className="text-right">
+        {/* Item Details */}
+        <div className="flex-1 min-w-0">
+          {/* English name prominently */}
           <p
-            className={`font-semibold ${
+            className={`font-medium text-sm sm:text-base leading-tight ${
+              item.isPurchased ? 'text-green-800 line-through' : 'text-gray-900'
+            }`}
+          >
+            {item.english_name || item.material_name}
+          </p>
+          {/* Indonesian name for Tokopedia search context */}
+          {item.english_name && item.english_name !== item.material_name && (
+            <p className="text-xs text-gray-500 truncate mt-0.5">
+              🛒 {item.material_name}
+            </p>
+          )}
+          {/* Quantity and unit price */}
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-0 text-xs sm:text-sm text-gray-600 mt-1">
+            <span>
+              {item.quantity} {item.unit}
+            </span>
+            <span className="text-gray-400 hidden sm:inline">|</span>
+            <span className="hidden sm:inline">{formatPrice(item.unit_price_idr)} / {item.unit}</span>
+          </div>
+        </div>
+
+        {/* Price - always visible on right */}
+        <div className="flex-shrink-0 text-right">
+          <p
+            className={`font-semibold text-sm sm:text-base ${
               item.isPurchased ? 'text-green-700' : 'text-gray-900'
             }`}
           >
             {formatPrice(item.total_price_idr)}
           </p>
+          {/* Show unit price on mobile below total */}
+          <p className="text-xs text-gray-500 sm:hidden">
+            {formatPrice(item.unit_price_idr)}/{item.unit}
+          </p>
         </div>
+      </div>
 
+      {/* Bottom row: Buy button (full width on mobile) */}
+      <div className="mt-3 sm:mt-2 flex sm:justify-end">
         {hasBuyLink ? (
           <button
             onClick={() => onBuyClick(item)}
             disabled={item.isPurchased}
-            className={`px-4 py-2 rounded-lg font-medium text-sm transition-colors flex items-center gap-2 ${
+            className={`w-full sm:w-auto px-4 py-2.5 sm:py-2 rounded-lg font-medium text-sm transition-colors flex items-center justify-center gap-2 ${
               item.isPurchased
                 ? 'bg-green-100 text-green-700 cursor-default'
                 : 'bg-green-600 text-white hover:bg-green-700 active:bg-green-800'
@@ -275,7 +285,7 @@ function MaterialItemRow({
             )}
           </button>
         ) : (
-          <span className="text-sm text-gray-400 px-4 py-2">
+          <span className="text-sm text-gray-400 py-2 text-center w-full sm:w-auto sm:text-right">
             No link available
           </span>
         )}
