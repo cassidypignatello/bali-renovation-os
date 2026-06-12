@@ -64,6 +64,100 @@ function useTips(active: boolean, tips: string[]): string {
   return tips[tipIndex];
 }
 
+// Match-confidence stamp chip: >=67% palm, 33-66% sun, below that ink-soft
+function confidenceChipStyle(confidence: number): React.CSSProperties {
+  if (confidence >= 0.67) {
+    return { borderColor: 'var(--palm)', color: 'var(--palm)' };
+  }
+  if (confidence >= 0.33) {
+    return { borderColor: 'var(--sun)', color: 'var(--sun)' };
+  }
+  return { borderColor: 'var(--ink-soft)', color: 'var(--ink-soft)' };
+}
+
+// CSS-drawn document icon (no emoji): rectangle, ruled lines, folded corner
+function DocumentIcon({ ready = false }: { ready?: boolean }) {
+  return (
+    <div className="relative inline-block mb-5">
+      <div
+        className="relative mx-auto"
+        style={{
+          width: '48px',
+          height: '60px',
+          background: ready ? 'rgba(31,92,61,0.08)' : 'white',
+          border: '1px solid var(--ink)',
+          borderRadius: '2px',
+          transform: 'rotate(-3deg)',
+          boxShadow: '2px 3px 8px rgba(32,35,29,0.12)',
+        }}
+      >
+        {/* Three ruled lines */}
+        <div
+          className="absolute"
+          style={{ top: '16px', left: '8px', width: '24px', height: '1.5px', background: 'var(--ink-soft)' }}
+        />
+        <div
+          className="absolute"
+          style={{ top: '26px', left: '8px', width: '30px', height: '1.5px', background: 'var(--ink-soft)' }}
+        />
+        <div
+          className="absolute"
+          style={{ top: '36px', left: '8px', width: '20px', height: '1.5px', background: 'var(--ink-soft)' }}
+        />
+        {/* Folded corner */}
+        <div
+          className="absolute"
+          style={{
+            top: '-1px',
+            right: '-1px',
+            width: 0,
+            height: 0,
+            borderLeft: '12px solid transparent',
+            borderTop: '12px solid var(--paper)',
+          }}
+        />
+        <div
+          className="absolute"
+          style={{
+            top: '0px',
+            right: '0px',
+            width: 0,
+            height: 0,
+            borderLeft: '11px solid transparent',
+            borderTop: '11px solid var(--rule)',
+          }}
+        />
+      </div>
+      {/* Palm check circle when ready */}
+      {ready && (
+        <div
+          className="absolute flex items-center justify-center"
+          style={{
+            bottom: '-6px',
+            right: '-10px',
+            width: '22px',
+            height: '22px',
+            borderRadius: '50%',
+            background: 'var(--palm)',
+          }}
+        >
+          {/* CSS check via border trick */}
+          <span
+            style={{
+              display: 'block',
+              width: '10px',
+              height: '5px',
+              borderLeft: '2px solid white',
+              borderBottom: '2px solid white',
+              transform: 'rotate(-45deg) translateY(-1px)',
+            }}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function BoQUpload() {
   const [state, setState] = useState<UploadState>('idle');
   const [error, setError] = useState<string | null>(null);
@@ -139,18 +233,6 @@ export function BoQUpload() {
       minimumFractionDigits: 0,
       maximumFractionDigits: 0,
     }).format(price);
-  };
-
-  const getConfidenceColor = (confidence: number) => {
-    if (confidence >= 0.85) return 'text-green-600 bg-green-50';
-    if (confidence >= 0.60) return 'text-yellow-600 bg-yellow-50';
-    return 'text-gray-600 bg-gray-50';
-  };
-
-  const getConfidenceLabel = (confidence: number) => {
-    if (confidence >= 0.85) return 'High';
-    if (confidence >= 0.60) return 'Medium';
-    return 'Low';
   };
 
   const handleFileSelect = useCallback((file: File) => {
@@ -299,89 +381,122 @@ export function BoQUpload() {
   // Render results view
   if (state === 'completed' && results) {
     return (
-      <div className="space-y-6">
+      <div className="space-y-8">
         {/* Extraction warnings */}
         {results.extraction_warnings.length > 0 && (
-          <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-            <span aria-hidden="true">⚠️</span>
-            <span>
+          <div
+            className="px-4 py-3 text-sm"
+            style={{
+              background: 'rgba(217,164,65,0.10)',
+              border: '1px solid var(--sun)',
+              borderRadius: '2px',
+              color: 'var(--ink)',
+            }}
+          >
+            <span className="font-mono font-medium tracking-wider" style={{ color: 'var(--sun)' }}>
+              NOTE —{' '}
+            </span>
+            <span className="font-body">
               Some pages could not be fully read — totals may be incomplete.
               {' '}({results.extraction_warnings.length} {results.extraction_warnings.length === 1 ? 'issue' : 'issues'})
             </span>
           </div>
         )}
 
-        {/* Summary Header */}
-        <div className="bg-gradient-to-r from-green-50 to-blue-50 rounded-lg p-6 border border-green-200">
-          <div className="flex items-center justify-between mb-4">
+        {/* Audit Complete header */}
+        <div>
+          <div className="flex items-start justify-between gap-4 mb-4">
             <div className="min-w-0 flex-1">
-              <h3 className="text-xl font-semibold text-gray-900">
-                Analysis Complete
-              </h3>
-              <p className="text-gray-600 truncate">
+              <div
+                className="animate-stamp inline-block font-mono text-xs font-medium tracking-[0.2em] uppercase mb-2"
+                style={{ color: 'var(--palm)' }}
+              >
+                Audit Complete
+              </div>
+              <h3
+                className="font-display font-semibold text-xl truncate"
+                style={{ color: 'var(--ink)' }}
+              >
                 {results.metadata.filename}
                 {results.metadata.contractor_name && (
-                  <span className="ml-2 text-sm">• {results.metadata.contractor_name}</span>
+                  <span className="ml-2 text-base" style={{ color: 'var(--ink-soft)' }}>
+                    — {results.metadata.contractor_name}
+                  </span>
                 )}
-              </p>
+              </h3>
             </div>
             <button
               onClick={handleReset}
-              className="ml-4 flex-shrink-0 px-4 py-2 text-sm text-gray-600 hover:text-gray-900 border rounded-lg"
+              className="flex-shrink-0 px-4 py-2 font-mono text-xs font-medium uppercase tracking-widest transition-all hover:-translate-y-px active:translate-y-0"
+              style={{
+                background: 'transparent',
+                border: '1px solid var(--ink)',
+                borderRadius: '2px',
+                color: 'var(--ink)',
+              }}
             >
-              Upload Another
+              New Audit
             </button>
           </div>
 
-          {/* Key Metrics */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <div className="bg-white rounded-lg p-4 shadow-sm">
-              <div className="text-sm text-gray-500">Contractor Quote</div>
-              <div className="text-lg font-semibold text-gray-900 break-words">
+          {/* Ledger strip: key metrics */}
+          <div
+            className="grid grid-cols-2 md:grid-cols-4"
+            style={{ border: '1px solid var(--rule)', borderRadius: '2px', background: 'rgba(255,255,255,0.5)' }}
+          >
+            <div className="p-4 border-b md:border-b-0 border-r" style={{ borderColor: 'var(--rule)' }}>
+              <div className="font-mono text-[11px] uppercase tracking-widest mb-1" style={{ color: 'var(--ink-soft)' }}>
+                Contractor Quote
+              </div>
+              <div className="font-mono font-semibold text-base break-words" style={{ color: 'var(--ink)', fontVariantNumeric: 'tabular-nums' }}>
                 {formatPrice(results.summary.contractor_total)}
               </div>
             </div>
-            <div className="bg-white rounded-lg p-4 shadow-sm">
-              <div className="text-sm text-gray-500">Market Estimate</div>
+            <div className="p-4 border-b md:border-b-0 md:border-r" style={{ borderColor: 'var(--rule)' }}>
+              <div className="font-mono text-[11px] uppercase tracking-widest mb-1" style={{ color: 'var(--ink-soft)' }}>
+                Market Estimate
+              </div>
               {results.summary.market_estimate != null ? (
-                <div className="text-lg font-semibold text-blue-600 break-words">
+                <div className="font-mono font-semibold text-base break-words" style={{ color: 'var(--ink)', fontVariantNumeric: 'tabular-nums' }}>
                   {formatPrice(results.summary.market_estimate)}
                 </div>
               ) : (
-                <>
-                  <div className="text-lg font-semibold text-gray-400">—</div>
-                  <div className="text-xs text-gray-400">Not enough market data</div>
-                </>
+                <div className="font-mono text-sm" style={{ color: 'var(--ink-soft)' }}>
+                  — Not enough market data
+                </div>
               )}
             </div>
-            <div className="bg-white rounded-lg p-4 shadow-sm">
-              <div className="text-sm text-gray-500">Potential Savings</div>
+            <div className="p-4 border-r" style={{ background: 'var(--ink-panel)', borderColor: 'var(--rule)' }}>
+              <div className="font-mono text-[11px] uppercase tracking-widest mb-1" style={{ color: 'rgba(250,245,236,0.6)' }}>
+                Potential Savings
+              </div>
               {results.summary.potential_savings != null ? (
                 <>
-                  <div className="text-lg font-semibold text-green-600 break-words">
+                  <div className="font-mono font-semibold text-base break-words" style={{ color: 'var(--palm-bright)', fontVariantNumeric: 'tabular-nums' }}>
                     {formatPrice(results.summary.potential_savings)}
                     {results.summary.savings_percent != null && (
-                      <span className="text-sm font-normal ml-1">
+                      <span className="ml-1.5 text-sm font-medium" style={{ color: 'var(--sun)' }}>
                         ({results.summary.savings_percent.toFixed(1)}%)
                       </span>
                     )}
                   </div>
-                  <div className="text-xs text-gray-400 mt-0.5">
+                  <div className="font-mono text-[11px] mt-1" style={{ color: 'rgba(250,245,236,0.6)' }}>
                     based on {results.summary.priced_count} of {results.summary.materials_count} materials
                   </div>
                 </>
               ) : (
-                <>
-                  <div className="text-lg font-semibold text-gray-400">—</div>
-                  <div className="text-xs text-gray-400">Not enough market data</div>
-                </>
+                <div className="font-mono text-sm" style={{ color: 'rgba(250,245,236,0.6)' }}>
+                  — Not enough market data
+                </div>
               )}
             </div>
-            <div className="bg-white rounded-lg p-4 shadow-sm">
-              <div className="text-sm text-gray-500">Items Analyzed</div>
-              <div className="text-lg font-semibold text-gray-900">
+            <div className="p-4">
+              <div className="font-mono text-[11px] uppercase tracking-widest mb-1" style={{ color: 'var(--ink-soft)' }}>
+                Items Analyzed
+              </div>
+              <div className="font-mono font-semibold text-base" style={{ color: 'var(--ink)', fontVariantNumeric: 'tabular-nums' }}>
                 {results.summary.priced_count}/{results.summary.materials_count}
-                <span className="text-sm font-normal ml-1">priced</span>
+                <span className="ml-1 text-xs font-normal" style={{ color: 'var(--ink-soft)' }}>priced</span>
               </div>
             </div>
           </div>
@@ -389,15 +504,20 @@ export function BoQUpload() {
 
         {/* Owner Supply Items - Shopping List */}
         {results.owner_supply_items.length > 0 && (
-          <div className="bg-white rounded-lg shadow-lg p-6 border-l-4 border-yellow-400">
-            <h4 className="text-lg font-semibold text-gray-900 mb-1 flex items-center gap-2">
-              <span>🛒</span> Your Shopping List
-              <span className="text-sm font-normal text-gray-500">
-                ({results.owner_supply_items.length} items to buy)
+          <div>
+            <div className="flex items-center gap-3 mb-1">
+              <h4 className="font-display font-semibold text-lg" style={{ color: 'var(--ink)' }}>
+                Your Shopping List
+              </h4>
+              <span
+                className="font-mono text-[11px] font-medium uppercase tracking-widest px-2.5 py-0.5 rounded-full"
+                style={{ border: '1px solid var(--ink)', color: 'var(--ink)' }}
+              >
+                {results.owner_supply_items.length} {results.owner_supply_items.length === 1 ? 'Item' : 'Items'}
               </span>
-            </h4>
-            <p className="text-sm text-gray-600 mb-4">
-              These items are marked &quot;Supply By Owner&quot; - you need to purchase them yourself
+            </div>
+            <p className="text-sm font-body mb-4" style={{ color: 'var(--ink-soft)' }}>
+              These items are marked &quot;Supply By Owner&quot; — you need to purchase them yourself
             </p>
             <div className="space-y-3">
               {results.owner_supply_items.map((item, idx) => (
@@ -409,15 +529,20 @@ export function BoQUpload() {
 
         {/* Overpriced Items */}
         {results.overpriced_items.length > 0 && (
-          <div className="bg-white rounded-lg shadow-lg p-6 border-l-4 border-red-400">
-            <h4 className="text-lg font-semibold text-gray-900 mb-1 flex items-center gap-2">
-              <span>⚠️</span> Potentially Overpriced
-              <span className="text-sm font-normal text-gray-500">
-                ({results.overpriced_items.length} items &gt;10% above market)
+          <div>
+            <div className="flex items-center gap-3 mb-1">
+              <h4 className="font-display font-semibold text-lg" style={{ color: 'var(--ink)' }}>
+                Potentially Overpriced
+              </h4>
+              <span
+                className="font-mono text-[11px] font-medium uppercase tracking-widest px-2.5 py-0.5 rounded-full"
+                style={{ border: '1px solid var(--clay)', color: 'var(--clay)' }}
+              >
+                {results.overpriced_items.length} {results.overpriced_items.length === 1 ? 'Item' : 'Items'}
               </span>
-            </h4>
-            <p className="text-sm text-gray-600 mb-4">
-              These items may be priced higher than market rates
+            </div>
+            <p className="text-sm font-body mb-4" style={{ color: 'var(--ink-soft)' }}>
+              These items may be priced higher than market rates (&gt;10% above market)
             </p>
             <div className="space-y-3">
               {results.overpriced_items.slice(0, 10).map((item, idx) => (
@@ -428,13 +553,18 @@ export function BoQUpload() {
         )}
 
         {/* All Materials Summary */}
-        <div className="bg-white rounded-lg shadow-lg p-6">
-          <h4 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
-            <span>📋</span> All Materials
-            <span className="text-sm font-normal text-gray-500">
-              ({results.all_materials.length} items)
+        <div>
+          <div className="flex items-center gap-3 mb-4">
+            <h4 className="font-display font-semibold text-lg" style={{ color: 'var(--ink)' }}>
+              All Materials
+            </h4>
+            <span
+              className="font-mono text-[11px] font-medium uppercase tracking-widest px-2.5 py-0.5 rounded-full"
+              style={{ border: '1px solid var(--ink)', color: 'var(--ink)' }}
+            >
+              {results.all_materials.length} {results.all_materials.length === 1 ? 'Item' : 'Items'}
             </span>
-          </h4>
+          </div>
           <div className="max-h-96 overflow-y-auto space-y-2">
             {results.all_materials.map((item, idx) => (
               <ItemCard key={item.id || idx} item={item} compact />
@@ -446,19 +576,29 @@ export function BoQUpload() {
   }
 
   return (
-    <div className="space-y-4">
-      {/* Drop Zone */}
+    <div className="space-y-5">
+      {/* Drop Zone / Audit Panel */}
       <div
         onDrop={handleDrop}
         onDragOver={handleDragOver}
         onClick={() => state === 'idle' && fileInputRef.current?.click()}
         className={`
-          relative rounded-lg border-2 border-dashed p-8 text-center transition-all
-          ${state === 'idle' ? 'cursor-pointer hover:border-blue-400 hover:bg-blue-50/50' : ''}
-          ${selectedFile && state === 'idle' ? 'border-blue-400 bg-blue-50' : 'border-gray-300'}
-          ${state === 'uploading' || state === 'processing' ? 'border-blue-400 bg-blue-50' : ''}
-          ${state === 'failed' ? 'border-red-300 bg-red-50' : ''}
+          relative p-8 text-center transition-all
+          ${state === 'idle' ? 'cursor-pointer hover:bg-white/40' : ''}
         `}
+        style={{
+          border:
+            state === 'failed'
+              ? '1px solid var(--clay)'
+              : state === 'uploading' || state === 'processing'
+                ? '1px solid var(--rule)'
+                : '1.5px dashed var(--ink)',
+          borderRadius: '2px',
+          background:
+            state === 'failed'
+              ? 'var(--clay-soft)'
+              : 'var(--paper)',
+        }}
       >
         <input
           ref={fileInputRef}
@@ -475,56 +615,82 @@ export function BoQUpload() {
 
         {state === 'idle' && !selectedFile && (
           <>
-            <div className="text-5xl mb-4">📄</div>
-            <p className="text-gray-700 font-medium">
-              Drop your BoQ file here
+            <DocumentIcon />
+            <p className="font-display font-semibold text-xl" style={{ color: 'var(--ink)' }}>
+              Drop the quote here
             </p>
-            <p className="text-gray-500 text-sm mt-1">
-              or click to browse • PDF, Excel (.xlsx, .xls)
+            <p className="font-body text-sm mt-2" style={{ color: 'var(--ink-soft)' }}>
+              PDF or Excel — exactly as the contractor sent it
             </p>
           </>
         )}
 
         {state === 'idle' && selectedFile && (
           <>
-            <div className="text-5xl mb-4">✅</div>
-            <p className="text-gray-900 font-medium">{selectedFile.name}</p>
-            <p className="text-gray-500 text-sm mt-1">
-              {(selectedFile.size / 1024).toFixed(1)} KB • Ready to analyze
+            <DocumentIcon ready />
+            <p className="font-mono font-medium text-sm break-words" style={{ color: 'var(--ink)' }}>
+              {selectedFile.name}
+            </p>
+            <p className="font-mono text-xs mt-2" style={{ color: 'var(--ink-soft)' }}>
+              {(selectedFile.size / 1024).toFixed(1)} KB · Ready to analyze
             </p>
           </>
         )}
 
         {(state === 'uploading' || state === 'processing') && (
-          <>
-            <div className="text-5xl mb-4 animate-pulse">⏳</div>
-            <p className="text-blue-700 font-medium">
-              {state === 'uploading' ? 'Uploading…' : stageMessage}
-            </p>
+          <div className="text-left">
+            {state === 'uploading' && (
+              <p className="font-body font-medium" style={{ color: 'var(--ink)' }}>
+                Uploading…
+              </p>
+            )}
             {state === 'processing' && (
-              <div className="mt-4 w-full max-w-xs mx-auto">
-                <div className="bg-blue-100 rounded-full h-2 overflow-hidden">
+              <>
+                <div className="flex items-baseline gap-4 flex-wrap">
+                  <span
+                    className="font-mono font-semibold"
+                    style={{
+                      fontSize: '2.5rem',
+                      lineHeight: 1,
+                      color: 'var(--ink)',
+                      fontVariantNumeric: 'tabular-nums',
+                    }}
+                  >
+                    {barPercent}%
+                  </span>
+                  <span className="font-body text-sm" style={{ color: 'var(--ink)' }}>
+                    {stageMessage}
+                  </span>
+                </div>
+                <div
+                  className="mt-4 w-full overflow-hidden"
+                  style={{ height: '6px', background: 'var(--paper-deep)' }}
+                >
                   <div
-                    className="bg-blue-500 h-full transition-all duration-700 ease-out"
-                    style={{ width: `${barPercent}%` }}
+                    className="progress-bar-sweep h-full transition-all duration-700 ease-out"
+                    style={{ width: `${barPercent}%`, background: 'var(--palm)' }}
                   />
                 </div>
-                <p className="text-sm text-gray-500 mt-2">{barPercent}% complete</p>
                 {showTips && (
-                  <p className="text-xs text-gray-400 mt-3 italic transition-opacity duration-500">
+                  <p
+                    key={currentTip}
+                    className="animate-tick font-mono text-xs mt-3"
+                    style={{ color: 'var(--ink-soft)' }}
+                  >
                     {currentTip}
                   </p>
                 )}
-              </div>
+              </>
             )}
-          </>
+          </div>
         )}
 
         {state === 'failed' && (
           <>
-            <div className="text-5xl mb-4">❌</div>
-            <p className="text-red-700 font-medium">Upload Failed</p>
-            <p className="text-red-600 text-sm mt-1">
+            <p className="font-display font-semibold text-xl" style={{ color: 'var(--clay)' }}>
+              We couldn&apos;t read that one.
+            </p>
+            <p className="font-body text-sm mt-2" style={{ color: 'var(--ink)' }}>
               We couldn&apos;t process this file. Please try again, or contact us if it keeps happening.
             </p>
           </>
@@ -535,16 +701,18 @@ export function BoQUpload() {
       {state === 'idle' && selectedFile && (
         <button
           onClick={handleUpload}
-          className="w-full py-3 px-6 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg transition-colors"
+          className="w-full py-3 px-6 font-mono font-medium uppercase tracking-widest text-sm text-white transition-all hover:brightness-90 hover:-translate-y-px active:translate-y-0 active:brightness-75"
+          style={{ background: 'var(--palm)', borderRadius: '2px' }}
         >
-          Analyze BoQ
+          Run the Audit →
         </button>
       )}
 
       {state === 'failed' && (
         <button
           onClick={handleReset}
-          className="w-full py-3 px-6 bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium rounded-lg transition-colors"
+          className="w-full py-3 px-6 font-mono font-medium uppercase tracking-widest text-sm text-white transition-all hover:brightness-90 hover:-translate-y-px active:translate-y-0 active:brightness-75"
+          style={{ background: 'var(--clay)', borderRadius: '2px' }}
         >
           Try Again
         </button>
@@ -552,28 +720,17 @@ export function BoQUpload() {
 
       {/* Info */}
       {state === 'idle' && (
-        <div className="grid grid-cols-3 gap-4 text-center text-sm">
-          <div className="bg-green-50 rounded-lg p-3">
-            <div className="text-2xl mb-1">💰</div>
-            <div className="text-gray-700 font-medium">Verify Pricing</div>
-            <div className="text-gray-500 text-xs">Compare against market</div>
-          </div>
-          <div className="bg-yellow-50 rounded-lg p-3">
-            <div className="text-2xl mb-1">🛒</div>
-            <div className="text-gray-700 font-medium">Shopping List</div>
-            <div className="text-gray-500 text-xs">Items you need to buy</div>
-          </div>
-          <div className="bg-blue-50 rounded-lg p-3">
-            <div className="text-2xl mb-1">📊</div>
-            <div className="text-gray-700 font-medium">Confidence Score</div>
-            <div className="text-gray-500 text-xs">Know the match quality</div>
-          </div>
-        </div>
+        <p
+          className="text-center font-mono text-[11px] uppercase tracking-[0.18em]"
+          style={{ color: 'var(--ink-soft)' }}
+        >
+          Verify Pricing / Build Shopping List / Match Confidence
+        </p>
       )}
 
       {/* Processing Info */}
       {state === 'processing' && (
-        <p className="text-center text-sm text-gray-500">
+        <p className="text-center font-mono text-xs" style={{ color: 'var(--ink-soft)' }}>
           Analysis typically takes 3–7 minutes for full documents
         </p>
       )}
@@ -602,31 +759,41 @@ function ItemCard({
     }).format(price);
   };
 
-  const getConfidenceColor = (confidence: number) => {
-    if (confidence >= 0.85) return 'text-green-600 bg-green-100';
-    if (confidence >= 0.60) return 'text-yellow-600 bg-yellow-100';
-    return 'text-gray-600 bg-gray-100';
-  };
-
   if (compact) {
     return (
-      <div className="flex items-center justify-between py-2 px-3 bg-gray-50 rounded hover:bg-gray-100">
+      <div
+        className="flex items-center justify-between py-2 px-3 transition-colors hover:bg-white/80"
+        style={{
+          background: 'rgba(255,255,255,0.5)',
+          border: '1px solid var(--rule)',
+          borderRadius: '2px',
+        }}
+      >
         <div className="flex-1 min-w-0 mr-4">
-          <p className="text-sm text-gray-900 truncate break-words">{item.description}</p>
+          <p className="text-sm font-body font-medium truncate break-words" style={{ color: 'var(--ink)' }}>
+            {item.description}
+          </p>
           {item.quantity && item.unit && (
-            <p className="text-xs text-gray-500">
+            <p className="font-mono text-xs" style={{ color: 'var(--ink-soft)' }}>
               {item.quantity} {item.unit}
             </p>
           )}
         </div>
         <div className="flex-shrink-0 text-right">
           {item.contractor_total ? (
-            <p className="text-sm font-medium text-gray-900">
+            <p className="font-mono text-sm font-medium" style={{ color: 'var(--ink)', fontVariantNumeric: 'tabular-nums' }}>
               {formatPrice(item.contractor_total)}
             </p>
           ) : null}
           {item.match_confidence !== undefined && item.match_confidence > 0 && (
-            <span className={`text-xs px-1.5 py-0.5 rounded ${getConfidenceColor(item.match_confidence)}`}>
+            <span
+              className="inline-block font-mono text-[10px] font-medium px-1.5 py-0.5"
+              style={{
+                border: '1px solid',
+                borderRadius: '2px',
+                ...confidenceChipStyle(item.match_confidence),
+              }}
+            >
               {Math.round(item.match_confidence * 100)}%
             </span>
           )}
@@ -636,12 +803,22 @@ function ItemCard({
   }
 
   return (
-    <div className="bg-gray-50 rounded-lg p-4 min-w-0">
+    <div
+      className="ledger-ruled p-4 min-w-0"
+      style={{
+        background: 'rgba(255,255,255,0.5)',
+        border: '1px solid var(--rule)',
+        borderLeft: showDifference ? '3px solid var(--clay)' : '1px solid var(--rule)',
+        borderRadius: '2px',
+      }}
+    >
       <div className="flex items-start justify-between gap-4">
         <div className="flex-1 min-w-0">
-          <p className="font-medium text-gray-900 break-words">{item.description}</p>
+          <p className="font-body font-medium break-words" style={{ color: 'var(--ink)' }}>
+            {item.description}
+          </p>
           {item.quantity && item.unit && (
-            <p className="text-sm text-gray-500 mt-1">
+            <p className="font-mono text-sm mt-1" style={{ color: 'var(--ink-soft)' }}>
               {item.quantity} {item.unit}
               {item.contractor_unit_price && (
                 <span> @ {formatPrice(item.contractor_unit_price)}</span>
@@ -650,27 +827,38 @@ function ItemCard({
           )}
         </div>
         {item.match_confidence !== undefined && item.match_confidence > 0 && (
-          <span className={`flex-shrink-0 text-xs px-2 py-1 rounded-full ${getConfidenceColor(item.match_confidence)}`}>
+          <span
+            className="flex-shrink-0 font-mono text-[11px] font-medium uppercase tracking-wider px-2 py-1"
+            style={{
+              border: '1px solid',
+              borderRadius: '2px',
+              ...confidenceChipStyle(item.match_confidence),
+            }}
+          >
             {Math.round(item.match_confidence * 100)}% match
           </span>
         )}
       </div>
 
       {showPricing && item.tokopedia_product_name && (
-        <div className="mt-3 pt-3 border-t border-gray-200 min-w-0">
+        <div className="mt-3 pt-3 min-w-0" style={{ borderTop: '1px solid var(--rule)' }}>
           <div className="flex items-start justify-between gap-3">
             <div className="flex-1 min-w-0">
-              <p className="text-sm text-gray-600">Market Match:</p>
-              <p className="text-sm font-medium text-gray-900 break-words line-clamp-2">
+              <p className="font-mono text-xs uppercase tracking-wider" style={{ color: 'var(--ink-soft)' }}>
+                Market Match
+              </p>
+              <p className="font-body text-sm font-medium break-words line-clamp-2" style={{ color: 'var(--ink)' }}>
                 {item.tokopedia_product_name}
               </p>
               {item.tokopedia_seller_location && (
-                <p className="text-xs text-gray-500 break-words">📍 {item.tokopedia_seller_location}</p>
+                <p className="font-mono text-xs break-words" style={{ color: 'var(--ink-soft)' }}>
+                  {item.tokopedia_seller_location}
+                </p>
               )}
             </div>
             <div className="flex-shrink-0 text-right">
               {item.tokopedia_price && (
-                <p className="text-lg font-semibold text-blue-600">
+                <p className="font-mono text-base font-semibold" style={{ color: 'var(--ink)', fontVariantNumeric: 'tabular-nums' }}>
                   {formatPrice(item.tokopedia_price)}
                 </p>
               )}
@@ -679,7 +867,8 @@ function ItemCard({
                   href={item.tokopedia_url}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="text-xs text-blue-500 hover:underline"
+                  className="font-mono text-xs hover:underline"
+                  style={{ color: 'var(--palm)' }}
                 >
                   View on Tokopedia →
                 </a>
@@ -690,21 +879,23 @@ function ItemCard({
       )}
 
       {showDifference && item.price_difference_percent !== undefined && (
-        <div className="mt-3 pt-3 border-t border-gray-200">
+        <div className="mt-3 pt-3" style={{ borderTop: '1px solid var(--rule)' }}>
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0">
-              <p className="text-sm text-gray-600">
+              <p className="font-mono text-sm" style={{ color: 'var(--ink-soft)' }}>
                 Contractor: {item.contractor_unit_price ? formatPrice(item.contractor_unit_price) : '—'}
               </p>
-              <p className="text-sm text-gray-600">
+              <p className="font-mono text-sm" style={{ color: 'var(--ink-soft)' }}>
                 Market: {item.market_unit_price ? formatPrice(item.market_unit_price) : '—'}
               </p>
             </div>
             <div className="flex-shrink-0 text-right">
-              <p className="text-lg font-semibold text-red-600">
+              <p className="font-mono text-lg font-semibold" style={{ color: 'var(--clay)', fontVariantNumeric: 'tabular-nums' }}>
                 +{item.price_difference_percent?.toFixed(1)}%
               </p>
-              <p className="text-sm text-gray-500">above market</p>
+              <p className="font-mono text-xs" style={{ color: 'var(--ink-soft)' }}>
+                above market
+              </p>
             </div>
           </div>
         </div>

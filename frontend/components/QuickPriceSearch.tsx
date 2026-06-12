@@ -30,24 +30,46 @@ export function QuickPriceSearch({ onSearchComplete }: QuickPriceSearchProps) {
     }).format(priceIdr);
   };
 
-  const getConfidenceColor = (confidence: number) => {
-    if (confidence >= 0.8) return 'text-green-600';
-    if (confidence >= 0.6) return 'text-yellow-600';
-    return 'text-red-600';
+  // Match-confidence stamp chip: >=67% palm, 33-66% sun, below that ink-soft
+  const confidenceChipStyle = (confidence: number): React.CSSProperties => {
+    if (confidence >= 0.67) return { borderColor: 'var(--palm)', color: 'var(--palm)' };
+    if (confidence >= 0.33) return { borderColor: 'var(--sun)', color: 'var(--sun)' };
+    return { borderColor: 'var(--ink-soft)', color: 'var(--ink-soft)' };
   };
 
   const getSourceBadge = (source: string) => {
     switch (source) {
       case 'cached':
+        return (
+          <span className="font-mono text-[10px] font-medium uppercase tracking-widest" style={{ color: 'var(--sun)' }}>
+            Cached
+          </span>
+        );
       case 'historical':
       case 'historical_fuzzy':
-        return <span className="px-2 py-0.5 text-xs bg-green-100 text-green-700 rounded-full">⚡ Cached</span>;
+        return (
+          <span className="font-mono text-[10px] font-medium uppercase tracking-widest" style={{ color: 'var(--ink-soft)' }}>
+            Stale Price
+          </span>
+        );
       case 'tokopedia':
-        return <span className="px-2 py-0.5 text-xs bg-blue-100 text-blue-700 rounded-full">🛒 Live</span>;
+        return (
+          <span className="font-mono text-[10px] font-medium uppercase tracking-widest" style={{ color: 'var(--palm)' }}>
+            Live
+          </span>
+        );
       case 'estimated':
-        return <span className="px-2 py-0.5 text-xs bg-yellow-100 text-yellow-700 rounded-full">📊 Estimated</span>;
+        return (
+          <span className="font-mono text-[10px] font-medium uppercase tracking-widest" style={{ color: 'var(--ink-soft)' }}>
+            Estimated
+          </span>
+        );
       default:
-        return <span className="px-2 py-0.5 text-xs bg-gray-100 text-gray-700 rounded-full">{source}</span>;
+        return (
+          <span className="font-mono text-[10px] font-medium uppercase tracking-widest" style={{ color: 'var(--ink-soft)' }}>
+            {source}
+          </span>
+        );
     }
   };
 
@@ -116,29 +138,38 @@ export function QuickPriceSearch({ onSearchComplete }: QuickPriceSearchProps) {
     }
   };
 
+  const inputStyle: React.CSSProperties = {
+    background: 'white',
+    border: '1px solid var(--rule)',
+    borderRadius: '2px',
+    color: 'var(--ink)',
+  };
+
   return (
     <div className="space-y-6">
       {/* Mode Toggle */}
-      <div className="flex border-b border-gray-200">
+      <div className="flex gap-6" style={{ borderBottom: '1px solid var(--rule)' }}>
         <button
           type="button"
           onClick={() => setSearchMode('single')}
-          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-            searchMode === 'single'
-              ? 'border-blue-600 text-blue-600'
-              : 'border-transparent text-gray-500 hover:text-gray-700'
-          }`}
+          className="pb-2 font-mono text-xs font-medium uppercase tracking-widest transition-colors"
+          style={{
+            color: searchMode === 'single' ? 'var(--ink)' : 'var(--ink-soft)',
+            borderBottom: searchMode === 'single' ? '2px solid var(--ink)' : '2px solid transparent',
+            marginBottom: '-1px',
+          }}
         >
           Single Item
         </button>
         <button
           type="button"
           onClick={() => setSearchMode('multiple')}
-          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-            searchMode === 'multiple'
-              ? 'border-blue-600 text-blue-600'
-              : 'border-transparent text-gray-500 hover:text-gray-700'
-          }`}
+          className="pb-2 font-mono text-xs font-medium uppercase tracking-widest transition-colors"
+          style={{
+            color: searchMode === 'multiple' ? 'var(--ink)' : 'var(--ink-soft)',
+            borderBottom: searchMode === 'multiple' ? '2px solid var(--ink)' : '2px solid transparent',
+            marginBottom: '-1px',
+          }}
         >
           Multiple Items
         </button>
@@ -148,7 +179,11 @@ export function QuickPriceSearch({ onSearchComplete }: QuickPriceSearchProps) {
       {searchMode === 'single' && (
         <form onSubmit={handleSingleSearch} className="space-y-4">
           <div>
-            <label htmlFor="materialName" className="block text-sm font-medium text-gray-700 mb-1">
+            <label
+              htmlFor="materialName"
+              className="block font-mono text-[11px] uppercase tracking-widest mb-1.5"
+              style={{ color: 'var(--ink-soft)' }}
+            >
               What do you need priced?
             </label>
             <input
@@ -157,14 +192,19 @@ export function QuickPriceSearch({ onSearchComplete }: QuickPriceSearchProps) {
               value={materialName}
               onChange={(e) => setMaterialName(e.target.value)}
               placeholder="e.g., gypsum board 9mm, tempered glass 8mm, semen 50kg"
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-black"
+              className="w-full px-4 py-2 font-body text-sm focus:outline-none focus:ring-2 focus:ring-[var(--palm)]"
+              style={inputStyle}
               required
             />
           </div>
 
           <div className="flex gap-4">
             <div className="flex-1">
-              <label htmlFor="quantity" className="block text-sm font-medium text-gray-700 mb-1">
+              <label
+                htmlFor="quantity"
+                className="block font-mono text-[11px] uppercase tracking-widest mb-1.5"
+                style={{ color: 'var(--ink-soft)' }}
+              >
                 Quantity
               </label>
               <input
@@ -174,18 +214,24 @@ export function QuickPriceSearch({ onSearchComplete }: QuickPriceSearchProps) {
                 step="0.1"
                 value={quantity}
                 onChange={(e) => setQuantity(parseFloat(e.target.value) || 1)}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-black"
+                className="w-full px-4 py-2 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-[var(--palm)]"
+                style={{ ...inputStyle, fontVariantNumeric: 'tabular-nums' }}
               />
             </div>
             <div className="flex-1">
-              <label htmlFor="unit" className="block text-sm font-medium text-gray-700 mb-1">
+              <label
+                htmlFor="unit"
+                className="block font-mono text-[11px] uppercase tracking-widest mb-1.5"
+                style={{ color: 'var(--ink-soft)' }}
+              >
                 Unit
               </label>
               <select
                 id="unit"
                 value={unit}
                 onChange={(e) => setUnit(e.target.value)}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-black"
+                className="w-full px-4 py-2 font-body text-sm focus:outline-none focus:ring-2 focus:ring-[var(--palm)]"
+                style={inputStyle}
               >
                 <option value="pcs">pcs (pieces)</option>
                 <option value="m2">m² (square meters)</option>
@@ -202,9 +248,10 @@ export function QuickPriceSearch({ onSearchComplete }: QuickPriceSearchProps) {
           <button
             type="submit"
             disabled={loading || !materialName.trim()}
-            className="w-full bg-green-600 text-white py-3 px-6 rounded-lg font-semibold hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
+            className="w-full py-3 px-6 font-mono font-medium uppercase tracking-widest text-sm text-white transition-all hover:brightness-90 hover:-translate-y-px active:translate-y-0 active:brightness-75 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0 disabled:hover:brightness-100"
+            style={{ background: 'var(--palm)', borderRadius: '2px' }}
           >
-            {loading ? 'Getting Price...' : '🔍 Get Price'}
+            {loading ? 'Checking…' : 'Check Price →'}
           </button>
         </form>
       )}
@@ -213,7 +260,11 @@ export function QuickPriceSearch({ onSearchComplete }: QuickPriceSearchProps) {
       {searchMode === 'multiple' && (
         <form onSubmit={handleMultipleSearch} className="space-y-4">
           <div>
-            <label htmlFor="materialsList" className="block text-sm font-medium text-gray-700 mb-1">
+            <label
+              htmlFor="materialsList"
+              className="block font-mono text-[11px] uppercase tracking-widest mb-1.5"
+              style={{ color: 'var(--ink-soft)' }}
+            >
               Enter materials (one per line)
             </label>
             <textarea
@@ -228,10 +279,11 @@ keramik 60x60, 15, m2
 Format: material name, quantity, unit
 (quantity and unit are optional)`}
               rows={6}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-black font-mono text-sm"
+              className="w-full px-4 py-2 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-[var(--palm)]"
+              style={inputStyle}
               required
             />
-            <p className="mt-1 text-xs text-gray-500">
+            <p className="mt-1.5 font-mono text-[11px]" style={{ color: 'var(--ink-soft)' }}>
               Format: material name, quantity, unit (quantity and unit are optional, defaults to 1 pcs)
             </p>
           </div>
@@ -239,49 +291,72 @@ Format: material name, quantity, unit
           <button
             type="submit"
             disabled={loading || !materialsList.trim()}
-            className="w-full bg-green-600 text-white py-3 px-6 rounded-lg font-semibold hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
+            className="w-full py-3 px-6 font-mono font-medium uppercase tracking-widest text-sm text-white transition-all hover:brightness-90 hover:-translate-y-px active:translate-y-0 active:brightness-75 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0 disabled:hover:brightness-100"
+            style={{ background: 'var(--palm)', borderRadius: '2px' }}
           >
-            {loading ? 'Getting Prices...' : '🔍 Get All Prices'}
+            {loading ? 'Checking…' : 'Check Prices →'}
           </button>
         </form>
       )}
 
       {/* Loading State */}
       {loading && (
-        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 text-center">
-          <div className="animate-spin inline-block w-6 h-6 border-2 border-blue-600 border-t-transparent rounded-full mb-2"></div>
-          <p className="text-blue-800">Checking prices... This may take a moment if we need to fetch live data.</p>
+        <div
+          className="p-4 text-center"
+          style={{ background: 'rgba(255,255,255,0.5)', border: '1px solid var(--rule)', borderRadius: '2px' }}
+        >
+          <div
+            className="animate-spin inline-block w-5 h-5 border-2 rounded-full mb-2"
+            style={{ borderColor: 'var(--palm)', borderTopColor: 'transparent' }}
+          ></div>
+          <p className="font-body text-sm" style={{ color: 'var(--ink)' }}>
+            Checking prices… This may take a moment if we need to fetch live data.
+          </p>
         </div>
       )}
 
       {/* Error State */}
       {error && (
-        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
+        <div
+          className="px-4 py-3 font-body text-sm"
+          style={{
+            background: 'var(--clay-soft)',
+            border: '1px solid var(--clay)',
+            borderRadius: '2px',
+            color: 'var(--clay)',
+          }}
+        >
           {error}
         </div>
       )}
 
       {/* Results */}
       {results && results.length > 0 && (
-        <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+        <div
+          className="overflow-hidden"
+          style={{ background: 'rgba(255,255,255,0.5)', border: '1px solid var(--rule)', borderRadius: '2px' }}
+        >
           {/* Stats Header */}
           {stats && (
-            <div className="bg-gray-50 border-b border-gray-200 px-4 py-3 flex flex-wrap gap-4 text-sm">
-              <span className="text-gray-600">
+            <div
+              className="px-4 py-3 flex flex-wrap gap-4 font-mono text-xs"
+              style={{ background: 'var(--paper-deep)', borderBottom: '1px solid var(--rule)' }}
+            >
+              <span style={{ color: 'var(--ink)' }}>
                 <strong>{results.length}</strong> item{results.length !== 1 ? 's' : ''} priced
               </span>
               {stats.cacheHits > 0 && (
-                <span className="text-green-600">
-                  ⚡ {stats.cacheHits} from cache
+                <span className="uppercase tracking-wider" style={{ color: 'var(--sun)' }}>
+                  {stats.cacheHits} from cache
                 </span>
               )}
               {stats.scrapeCount > 0 && (
-                <span className="text-blue-600">
-                  🛒 {stats.scrapeCount} live lookup{stats.scrapeCount !== 1 ? 's' : ''}
+                <span className="uppercase tracking-wider" style={{ color: 'var(--palm)' }}>
+                  {stats.scrapeCount} live lookup{stats.scrapeCount !== 1 ? 's' : ''}
                 </span>
               )}
               {results.length > 1 && (
-                <span className="ml-auto font-semibold text-gray-900">
+                <span className="ml-auto font-semibold" style={{ color: 'var(--ink)', fontVariantNumeric: 'tabular-nums' }}>
                   Total: {formatPrice(stats.totalCost)}
                 </span>
               )}
@@ -289,26 +364,42 @@ Format: material name, quantity, unit
           )}
 
           {/* Results List */}
-          <div className="divide-y divide-gray-100">
+          <div>
             {results.map((result, index) => (
-              <div key={index} className="p-4 hover:bg-gray-50">
+              <div
+                key={index}
+                className="ledger-ruled p-4 transition-colors hover:bg-white/60"
+                style={index > 0 ? { borderTop: '1px solid var(--rule)' } : undefined}
+              >
                 <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-                  <div className="flex-1">
+                  <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <span className="font-medium text-gray-900">{result.material_name}</span>
+                      <span className="font-body font-medium break-words" style={{ color: 'var(--ink)' }}>
+                        {result.material_name}
+                      </span>
                       {getSourceBadge(result.source)}
                     </div>
-                    <div className="text-sm text-gray-500 mt-1">
+                    <div className="font-mono text-xs mt-1" style={{ color: 'var(--ink-soft)' }}>
                       {result.quantity} {result.unit} × {formatPrice(result.unit_price_idr)}/{result.unit}
                     </div>
                   </div>
-                  <div className="text-right">
-                    <div className="text-lg font-semibold text-gray-900">
+                  <div className="text-right flex-shrink-0">
+                    <div
+                      className="font-mono font-semibold text-base"
+                      style={{ color: 'var(--ink)', fontVariantNumeric: 'tabular-nums' }}
+                    >
                       {formatPrice(result.total_price_idr)}
                     </div>
-                    <div className={`text-xs ${getConfidenceColor(result.confidence)}`}>
+                    <span
+                      className="inline-block font-mono text-[10px] font-medium uppercase tracking-wider px-1.5 py-0.5 mt-1"
+                      style={{
+                        border: '1px solid',
+                        borderRadius: '2px',
+                        ...confidenceChipStyle(result.confidence),
+                      }}
+                    >
                       {Math.round(result.confidence * 100)}% confidence
-                    </div>
+                    </span>
                   </div>
                 </div>
 
@@ -319,9 +410,10 @@ Format: material name, quantity, unit
                       href={result.affiliate_url}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="text-sm text-blue-600 hover:text-blue-800 hover:underline"
+                      className="font-mono text-xs hover:underline"
+                      style={{ color: 'var(--palm)' }}
                     >
-                      🛒 View on Tokopedia →
+                      View on Tokopedia →
                     </a>
                   </div>
                 )}

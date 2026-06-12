@@ -3,21 +3,144 @@
 @tailwind utilities;
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --paper: #FAF5EC;
+  --paper-deep: #F1E9DA;
+  --ink: #20231D;
+  --ink-soft: #5A5E53;
+  --rule: #D8CFBC;
+  --palm: #1F5C3D;
+  --palm-bright: #2E9E63;
+  --clay: #B4451F;
+  --clay-soft: #F3DDD2;
+  --sun: #D9A441;
+  --ink-panel: #232620;
+
+  /* legacy aliases kept for any other components */
+  --background: var(--paper);
+  --foreground: var(--ink);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+/* Grain overlay */
+body {
+  color: var(--ink);
+  background-color: var(--paper);
+  font-family: var(--font-body), sans-serif;
+  position: relative;
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 9999;
+  opacity: 0.03;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='200' height='200' filter='url(%23n)' opacity='1'/%3E%3C/svg%3E");
+  background-size: 200px 200px;
+}
+
+/* Ruled-paper texture for ledger sections */
+.ledger-ruled {
+  background-image: repeating-linear-gradient(
+    transparent 0px 27px,
+    var(--rule) 27px 28px
+  );
+  background-size: 100% 28px;
+  background-blend-mode: multiply;
+}
+
+/* Keyframe animations */
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
   }
 }
 
-body {
-  color: var(--foreground);
-  background: var(--background);
-  font-family: Arial, Helvetica, sans-serif;
+@keyframes sweep {
+  0% {
+    background-position: -200% center;
+  }
+  100% {
+    background-position: 200% center;
+  }
+}
+
+@keyframes stamp {
+  0% {
+    transform: scale(1.12) rotate(-2deg);
+  }
+  100% {
+    transform: scale(1) rotate(0deg);
+  }
+}
+
+@keyframes tick {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+/* Rise animation utility classes */
+.animate-rise {
+  animation: rise 0.6s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+.animate-rise-1 {
+  animation: rise 0.6s cubic-bezier(0.2, 0.8, 0.2, 1) 0s both;
+}
+.animate-rise-2 {
+  animation: rise 0.6s cubic-bezier(0.2, 0.8, 0.2, 1) 0.08s both;
+}
+.animate-rise-3 {
+  animation: rise 0.6s cubic-bezier(0.2, 0.8, 0.2, 1) 0.16s both;
+}
+.animate-rise-4 {
+  animation: rise 0.6s cubic-bezier(0.2, 0.8, 0.2, 1) 0.24s both;
+}
+
+.animate-stamp {
+  animation: stamp 0.35s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.animate-tick {
+  animation: tick 0.35s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+/* Progress bar sweep sheen */
+.progress-bar-sweep {
+  position: relative;
+  overflow: hidden;
+}
+.progress-bar-sweep::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    110deg,
+    transparent 0%,
+    transparent 35%,
+    rgba(255, 255, 255, 0.3) 50%,
+    transparent 65%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  animation: sweep 2.4s linear infinite;
 }
 
 @layer utilities {

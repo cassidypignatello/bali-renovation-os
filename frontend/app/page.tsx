@@ -3,60 +3,147 @@
 import { BoQUpload } from '@/components/BoQUpload';
 import { QuickPriceSearch } from '@/components/QuickPriceSearch';
 
+function SheetTab({ number, label }: { number: string; label: string }) {
+  return (
+    <div
+      className="absolute top-0 left-6 z-10 px-3 py-1 border border-b-0 text-xs tracking-wide"
+      style={{
+        transform: 'translateY(-100%)',
+        background: 'white',
+        borderColor: 'var(--rule)',
+        fontFamily: 'var(--font-display)',
+        fontWeight: 600,
+        color: 'var(--ink)',
+        borderTopWidth: '3px',
+        borderTopColor: 'var(--ink)',
+      }}
+    >
+      {number} — {label}
+    </div>
+  );
+}
+
 export default function Home() {
   return (
-    <main className="min-h-screen bg-gradient-to-b from-blue-50 to-white">
-      <div className="max-w-4xl mx-auto px-4 py-12">
-        {/* Header */}
-        <div className="text-center mb-12">
-          <h1 className="text-4xl font-bold text-gray-900 mb-4">
-            Bangun
-          </h1>
-          <p className="text-xl text-gray-600">
-            Build smarter.
+    <main
+      className="min-h-screen px-4 py-16 md:py-20"
+      style={{ background: 'var(--paper)' }}
+    >
+      <div className="mx-auto" style={{ maxWidth: '720px' }}>
+
+        {/* Masthead */}
+        <div className="animate-rise-1 relative mb-16">
+          {/* Desktop stamp chip */}
+          <div
+            className="hidden md:flex absolute top-0 right-0 items-center px-3 py-1.5 text-xs font-mono tracking-widest"
+            style={{
+              border: '1px solid var(--ink)',
+              transform: 'rotate(2deg)',
+              color: 'var(--ink)',
+              fontFamily: 'var(--font-mono)',
+              lineHeight: 1.4,
+            }}
+          >
+            EST. 2026 · CANGGU
+          </div>
+
+          {/* Overline rule + label */}
+          <div className="flex items-center gap-4 mb-4">
+            <div className="h-px flex-1 max-w-6" style={{ background: 'var(--rule)' }} />
+            <span
+              className="text-xs tracking-[0.2em] uppercase"
+              style={{ color: 'var(--ink-soft)', fontFamily: 'var(--font-mono)' }}
+            >
+              Material Price Verification — Bali
+            </span>
+            <div className="h-px flex-1" style={{ background: 'var(--rule)' }} />
+          </div>
+
+          {/* Wordmark */}
+          <div className="relative inline-block">
+            <h1
+              className="font-display italic font-black tracking-tight leading-none"
+              style={{
+                fontSize: 'clamp(3rem, 8vw, 5.5rem)',
+                color: 'var(--ink)',
+                fontVariationSettings: '"opsz" 72, "wght" 900',
+              }}
+            >
+              Bangun
+            </h1>
+            {/* Sun underline flourish */}
+            <div
+              className="absolute -bottom-2 left-0"
+              style={{
+                width: '60px',
+                height: '4px',
+                background: 'var(--sun)',
+                transform: 'rotate(-1.5deg)',
+                borderRadius: '1px',
+              }}
+            />
+          </div>
+
+          {/* Tagline */}
+          <p
+            className="mt-6 text-base"
+            style={{ color: 'var(--ink-soft)', fontFamily: 'var(--font-body)' }}
+          >
+            Your contractor&apos;s quote, checked against the live market.
           </p>
         </div>
 
-        {/* Main Feature Cards */}
-        <div className="space-y-8">
-          {/* BoQ Upload */}
-          <div className="bg-white rounded-lg shadow-lg p-8">
-            <div className="flex items-center gap-3 mb-4">
-              <span className="text-3xl">📄</span>
-              <h2 className="text-2xl font-semibold text-gray-900">
-                Upload Your BoQ
-              </h2>
+        {/* Sheet 1: Audit Sheet (BoQUpload) */}
+        <div className="animate-rise-2 relative mb-14">
+          <SheetTab number="№ 1" label="Upload your BoQ" />
+          <div
+            className="relative"
+            style={{
+              background: 'rgba(255,255,255,0.6)',
+              border: '1px solid var(--rule)',
+              borderTop: '3px solid var(--ink)',
+              borderRadius: '2px',
+              boxShadow:
+                '0 4px 8px rgba(32,35,29,0.04), 0 12px 24px rgba(32,35,29,0.06)',
+            }}
+          >
+            <div className="p-6 md:p-8">
+              <BoQUpload />
             </div>
-            <p className="text-gray-600 mb-6">
-              Got a contractor quote? Upload your Bill of Quantity (PDF or Excel) and we&apos;ll
-              verify their pricing against real-time market rates.
-            </p>
-            <BoQUpload />
-          </div>
-
-          {/* Quick Price Check */}
-          <div className="bg-white rounded-lg shadow-lg p-8">
-            <div className="flex items-center gap-3 mb-4">
-              <span className="text-3xl">🔍</span>
-              <h2 className="text-2xl font-semibold text-gray-900">
-                Quick Price Check
-              </h2>
-            </div>
-            <p className="text-gray-600 mb-6">
-              Need to price a single material or a quick list? Get real-time prices from
-              Tokopedia instantly.
-            </p>
-            <QuickPriceSearch />
           </div>
         </div>
 
-        {/* Footer info */}
-        <div className="mt-12 text-center text-gray-500 text-sm">
-          <p>
-            Prices sourced from Tokopedia marketplace • Updated in real-time •
-            <span className="text-green-600"> Bali sellers prioritized</span>
+        {/* Sheet 2: Quick Price Strip */}
+        <div className="animate-rise-3 relative mb-14">
+          <SheetTab number="№ 2" label="Quick price check" />
+          <div
+            className="relative"
+            style={{
+              background: 'var(--paper-deep)',
+              border: '1px solid var(--rule)',
+              borderTop: '3px solid var(--ink)',
+              borderRadius: '2px',
+              boxShadow:
+                '0 4px 8px rgba(32,35,29,0.03), 0 12px 24px rgba(32,35,29,0.05)',
+            }}
+          >
+            <div className="p-6 md:p-8">
+              <QuickPriceSearch />
+            </div>
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="animate-rise-4">
+          <div className="h-px w-full mb-4" style={{ background: 'var(--rule)' }} />
+          <p
+            className="text-xs tracking-wide text-center"
+            style={{ color: 'var(--ink-soft)', fontFamily: 'var(--font-mono)' }}
+          >
+            Prices from live Tokopedia listings · Bali sellers prioritized · Updated continuously
           </p>
         </div>
+
       </div>
     </main>
   );
