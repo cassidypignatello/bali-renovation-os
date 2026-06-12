@@ -11,25 +11,126 @@ import {
 
 type UploadState = 'idle' | 'uploading' | 'processing' | 'completed' | 'failed';
 
+// Stage message boundaries (inclusive lower, exclusive upper)
+function getStageMessage(percent: number): string {
+  if (percent < 8) return 'Reading your document…';
+  if (percent < 30) return 'AI is extracting line items from your pages…';
+  if (percent < 40) return 'Organizing extracted items…';
+  if (percent < 55) return 'Checking recent market prices…';
+  if (percent < 80) return 'Searching Tokopedia for live prices…';
+  if (percent < 85) return 'Matching products to your materials…';
+  return 'Calculating your savings…';
+}
+
+// Next stage boundary (used to cap the creep so bar never visually enters next stage)
+function nextStageBoundary(percent: number): number {
+  if (percent < 8) return 8;
+  if (percent < 30) return 30;
+  if (percent < 40) return 40;
+  if (percent < 55) return 55;
+  if (percent < 80) return 80;
+  if (percent < 85) return 85;
+  return 100;
+}
+
+// Tips shown during the two long stages
+const EXTRACTION_TIPS = [
+  'We read every line item — quantities, units, and prices.',
+  'Items marked "Supply By Owner" become your shopping list.',
+  'Large documents can take a few minutes — your analysis is running.',
+  'We extract from every page, even dense multi-column tables.',
+  'Suspicious price matches are filtered out automatically.',
+];
+
+const SCRAPING_TIPS = [
+  'Prices come from live Tokopedia listings, Bali sellers prioritized.',
+  'Suspicious price matches are filtered out automatically.',
+  'We cross-check multiple listings before picking a market price.',
+  'Items marked "Supply By Owner" become your shopping list.',
+  'Large documents can take a few minutes — your analysis is running.',
+];
+
+function useTips(active: boolean, tips: string[]): string {
+  const [tipIndex, setTipIndex] = useState(0);
+
+  useEffect(() => {
+    if (!active) return;
+    const id = setInterval(() => {
+      setTipIndex(i => (i + 1) % tips.length);
+    }, 6000);
+    return () => clearInterval(id);
+  }, [active, tips.length]);
+
+  return tips[tipIndex];
+}
+
 export function BoQUpload() {
   const [state, setState] = useState<UploadState>('idle');
   const [error, setError] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [jobId, setJobId] = useState<string | null>(null);
-  const [progress, setProgress] = useState(0);
-  const [statusMessage, setStatusMessage] = useState<string>('');
+  // realPercent: what the backend last reported
+  const [realPercent, setRealPercent] = useState(0);
+  // displayedPercent: the smoothed value shown in the bar
+  const [displayedPercent, setDisplayedPercent] = useState(0);
   const [results, setResults] = useState<BoQAnalysisResults | null>(null);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const animIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const isProcessingRef = useRef(false);
+  const realPercentRef = useRef(0);
+  const displayedPercentRef = useRef(0);
 
-  // Clean up polling on unmount
+  // Keep refs in sync so the animation closure always has fresh values
+  useEffect(() => { realPercentRef.current = realPercent; }, [realPercent]);
+  useEffect(() => { displayedPercentRef.current = displayedPercent; }, [displayedPercent]);
+
+  const stopAnimInterval = useCallback(() => {
+    if (animIntervalRef.current) {
+      clearInterval(animIntervalRef.current);
+      animIntervalRef.current = null;
+    }
+  }, []);
+
+  const startAnimInterval = useCallback(() => {
+    stopAnimInterval();
+    animIntervalRef.current = setInterval(() => {
+      const real = realPercentRef.current;
+      const displayed = displayedPercentRef.current;
+
+      if (displayed >= 100) return;
+
+      if (displayed < real) {
+        // Ease toward real: close the gap by ~40% each tick, minimum step 0.5
+        const gap = real - displayed;
+        const step = Math.max(gap * 0.4, 0.5);
+        const next = Math.min(displayed + step, real);
+        setDisplayedPercent(next);
+      } else if (isProcessingRef.current) {
+        // Creep: +1 capped at min(real + 4, nextBoundary - 1)
+        const cap = Math.min(real + 4, nextStageBoundary(real) - 1);
+        if (displayed < cap) {
+          setDisplayedPercent(displayed + 1);
+        }
+      }
+    }, 2500);
+  }, [stopAnimInterval]);
+
+  // Clean up all intervals on unmount
   useEffect(() => {
     return () => {
-      if (pollIntervalRef.current) {
-        clearInterval(pollIntervalRef.current);
-      }
+      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+      stopAnimInterval();
     };
-  }, []);
+  }, [stopAnimInterval]);
+
+  const stageMessage = getStageMessage(realPercent);
+  const isExtractingStage = realPercent >= 8 && realPercent < 30;
+  const isScrapingStage = realPercent >= 55 && realPercent < 80;
+  const showTips = isExtractingStage || isScrapingStage;
+  const activeTips = isScrapingStage ? SCRAPING_TIPS : EXTRACTION_TIPS;
+  const currentTip = useTips(state === 'processing' && showTips, activeTips);
 
   const formatPrice = (price: number) => {
     return new Intl.NumberFormat('id-ID', {
@@ -53,7 +154,6 @@ export function BoQUpload() {
   };
 
   const handleFileSelect = useCallback((file: File) => {
-    // Validate file type
     const validTypes = [
       'application/pdf',
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -71,7 +171,6 @@ export function BoQUpload() {
       return;
     }
 
-    // Validate file size (10MB max)
     if (file.size > 10 * 1024 * 1024) {
       setError('File too large. Maximum size is 10MB.');
       return;
@@ -103,22 +202,28 @@ export function BoQUpload() {
       console.error('[BoQ] Status poll error:', response.error.message, response.error.details);
       setError(response.error.message);
       setState('failed');
-      if (pollIntervalRef.current) {
-        clearInterval(pollIntervalRef.current);
-      }
+      isProcessingRef.current = false;
+      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+      stopAnimInterval();
       return;
     }
 
     const status = response.data!;
-    setProgress(status.progress_percent);
-    setStatusMessage(status.message || '');
+    const newReal = status.progress_percent;
+
+    // Never go backwards
+    setRealPercent(prev => Math.max(prev, newReal));
+    realPercentRef.current = Math.max(realPercentRef.current, newReal);
 
     if (status.status === 'completed') {
-      if (pollIntervalRef.current) {
-        clearInterval(pollIntervalRef.current);
-      }
+      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+      isProcessingRef.current = false;
+      stopAnimInterval();
 
-      // Fetch full results
+      // Snap displayed to 100
+      setDisplayedPercent(100);
+      setRealPercent(100);
+
       const resultsResponse = await boqApi.getResults(jobId);
       if (resultsResponse.error) {
         console.error('[BoQ] Results fetch error:', resultsResponse.error.message, resultsResponse.error.details);
@@ -129,21 +234,24 @@ export function BoQUpload() {
         setState('completed');
       }
     } else if (status.status === 'failed') {
-      if (pollIntervalRef.current) {
-        clearInterval(pollIntervalRef.current);
-      }
+      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+      isProcessingRef.current = false;
+      stopAnimInterval();
       console.error('[BoQ] Processing failed:', status.error_message);
       setError(status.error_message || 'Processing failed');
       setState('failed');
     }
-  }, []);
+  }, [stopAnimInterval]);
 
   const handleUpload = async () => {
     if (!selectedFile) return;
 
     setState('uploading');
     setError(null);
-    setProgress(0);
+    setRealPercent(0);
+    setDisplayedPercent(0);
+    realPercentRef.current = 0;
+    displayedPercentRef.current = 0;
 
     const response = await boqApi.uploadFile(selectedFile);
 
@@ -157,12 +265,15 @@ export function BoQUpload() {
     const data = response.data!;
     setJobId(data.job_id);
     setState('processing');
-    setStatusMessage(data.message);
+    isProcessingRef.current = true;
+
+    // Start smooth animation
+    startAnimInterval();
 
     // Start polling for status
     pollIntervalRef.current = setInterval(() => {
       pollStatus(data.job_id);
-    }, 2000);
+    }, 2500);
 
     // Initial poll
     pollStatus(data.job_id);
@@ -172,16 +283,20 @@ export function BoQUpload() {
     setState('idle');
     setSelectedFile(null);
     setJobId(null);
-    setProgress(0);
-    setStatusMessage('');
+    setRealPercent(0);
+    setDisplayedPercent(0);
+    realPercentRef.current = 0;
+    displayedPercentRef.current = 0;
     setResults(null);
     setError(null);
-    if (pollIntervalRef.current) {
-      clearInterval(pollIntervalRef.current);
-    }
+    isProcessingRef.current = false;
+    if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+    stopAnimInterval();
   };
 
-  // Render different states
+  const barPercent = Math.min(Math.round(displayedPercent), 100);
+
+  // Render results view
   if (state === 'completed' && results) {
     return (
       <div className="space-y-6">
@@ -199,11 +314,11 @@ export function BoQUpload() {
         {/* Summary Header */}
         <div className="bg-gradient-to-r from-green-50 to-blue-50 rounded-lg p-6 border border-green-200">
           <div className="flex items-center justify-between mb-4">
-            <div>
+            <div className="min-w-0 flex-1">
               <h3 className="text-xl font-semibold text-gray-900">
                 Analysis Complete
               </h3>
-              <p className="text-gray-600">
+              <p className="text-gray-600 truncate">
                 {results.metadata.filename}
                 {results.metadata.contractor_name && (
                   <span className="ml-2 text-sm">• {results.metadata.contractor_name}</span>
@@ -212,7 +327,7 @@ export function BoQUpload() {
             </div>
             <button
               onClick={handleReset}
-              className="px-4 py-2 text-sm text-gray-600 hover:text-gray-900 border rounded-lg"
+              className="ml-4 flex-shrink-0 px-4 py-2 text-sm text-gray-600 hover:text-gray-900 border rounded-lg"
             >
               Upload Another
             </button>
@@ -222,14 +337,14 @@ export function BoQUpload() {
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <div className="bg-white rounded-lg p-4 shadow-sm">
               <div className="text-sm text-gray-500">Contractor Quote</div>
-              <div className="text-lg font-semibold text-gray-900">
+              <div className="text-lg font-semibold text-gray-900 break-words">
                 {formatPrice(results.summary.contractor_total)}
               </div>
             </div>
             <div className="bg-white rounded-lg p-4 shadow-sm">
               <div className="text-sm text-gray-500">Market Estimate</div>
               {results.summary.market_estimate != null ? (
-                <div className="text-lg font-semibold text-blue-600">
+                <div className="text-lg font-semibold text-blue-600 break-words">
                   {formatPrice(results.summary.market_estimate)}
                 </div>
               ) : (
@@ -242,14 +357,19 @@ export function BoQUpload() {
             <div className="bg-white rounded-lg p-4 shadow-sm">
               <div className="text-sm text-gray-500">Potential Savings</div>
               {results.summary.potential_savings != null ? (
-                <div className="text-lg font-semibold text-green-600">
-                  {formatPrice(results.summary.potential_savings)}
-                  {results.summary.savings_percent != null && (
-                    <span className="text-sm font-normal ml-1">
-                      ({results.summary.savings_percent.toFixed(1)}%)
-                    </span>
-                  )}
-                </div>
+                <>
+                  <div className="text-lg font-semibold text-green-600 break-words">
+                    {formatPrice(results.summary.potential_savings)}
+                    {results.summary.savings_percent != null && (
+                      <span className="text-sm font-normal ml-1">
+                        ({results.summary.savings_percent.toFixed(1)}%)
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-xs text-gray-400 mt-0.5">
+                    based on {results.summary.priced_count} of {results.summary.materials_count} materials
+                  </div>
+                </>
               ) : (
                 <>
                   <div className="text-lg font-semibold text-gray-400">—</div>
@@ -348,7 +468,6 @@ export function BoQUpload() {
             if (e.target.files?.[0]) {
               handleFileSelect(e.target.files[0]);
             }
-            // Clear so re-selecting the same file triggers onChange next time
             e.target.value = '';
           }}
           className="hidden"
@@ -380,17 +499,22 @@ export function BoQUpload() {
           <>
             <div className="text-5xl mb-4 animate-pulse">⏳</div>
             <p className="text-blue-700 font-medium">
-              {state === 'uploading' ? 'Uploading...' : statusMessage || 'Processing...'}
+              {state === 'uploading' ? 'Uploading…' : stageMessage}
             </p>
             {state === 'processing' && (
               <div className="mt-4 w-full max-w-xs mx-auto">
                 <div className="bg-blue-100 rounded-full h-2 overflow-hidden">
                   <div
-                    className="bg-blue-500 h-full transition-all duration-500"
-                    style={{ width: `${progress}%` }}
+                    className="bg-blue-500 h-full transition-all duration-700 ease-out"
+                    style={{ width: `${barPercent}%` }}
                   />
                 </div>
-                <p className="text-sm text-gray-500 mt-2">{progress}% complete</p>
+                <p className="text-sm text-gray-500 mt-2">{barPercent}% complete</p>
+                {showTips && (
+                  <p className="text-xs text-gray-400 mt-3 italic transition-opacity duration-500">
+                    {currentTip}
+                  </p>
+                )}
               </div>
             )}
           </>
@@ -450,7 +574,7 @@ export function BoQUpload() {
       {/* Processing Info */}
       {state === 'processing' && (
         <p className="text-center text-sm text-gray-500">
-          Analysis typically takes 1-3 minutes depending on document size
+          Analysis typically takes 3–7 minutes for full documents
         </p>
       )}
     </div>
@@ -487,15 +611,15 @@ function ItemCard({
   if (compact) {
     return (
       <div className="flex items-center justify-between py-2 px-3 bg-gray-50 rounded hover:bg-gray-100">
-        <div className="flex-1 min-w-0">
-          <p className="text-sm text-gray-900 truncate">{item.description}</p>
+        <div className="flex-1 min-w-0 mr-4">
+          <p className="text-sm text-gray-900 truncate break-words">{item.description}</p>
           {item.quantity && item.unit && (
             <p className="text-xs text-gray-500">
               {item.quantity} {item.unit}
             </p>
           )}
         </div>
-        <div className="text-right ml-4">
+        <div className="flex-shrink-0 text-right">
           {item.contractor_total ? (
             <p className="text-sm font-medium text-gray-900">
               {formatPrice(item.contractor_total)}
@@ -512,10 +636,10 @@ function ItemCard({
   }
 
   return (
-    <div className="bg-gray-50 rounded-lg p-4">
+    <div className="bg-gray-50 rounded-lg p-4 min-w-0">
       <div className="flex items-start justify-between gap-4">
         <div className="flex-1 min-w-0">
-          <p className="font-medium text-gray-900">{item.description}</p>
+          <p className="font-medium text-gray-900 break-words">{item.description}</p>
           {item.quantity && item.unit && (
             <p className="text-sm text-gray-500 mt-1">
               {item.quantity} {item.unit}
@@ -526,23 +650,25 @@ function ItemCard({
           )}
         </div>
         {item.match_confidence !== undefined && item.match_confidence > 0 && (
-          <span className={`text-xs px-2 py-1 rounded-full ${getConfidenceColor(item.match_confidence)}`}>
+          <span className={`flex-shrink-0 text-xs px-2 py-1 rounded-full ${getConfidenceColor(item.match_confidence)}`}>
             {Math.round(item.match_confidence * 100)}% match
           </span>
         )}
       </div>
 
       {showPricing && item.tokopedia_product_name && (
-        <div className="mt-3 pt-3 border-t border-gray-200">
-          <div className="flex items-center justify-between">
-            <div>
+        <div className="mt-3 pt-3 border-t border-gray-200 min-w-0">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex-1 min-w-0">
               <p className="text-sm text-gray-600">Market Match:</p>
-              <p className="text-sm font-medium text-gray-900">{item.tokopedia_product_name}</p>
+              <p className="text-sm font-medium text-gray-900 break-words line-clamp-2">
+                {item.tokopedia_product_name}
+              </p>
               {item.tokopedia_seller_location && (
-                <p className="text-xs text-gray-500">📍 {item.tokopedia_seller_location}</p>
+                <p className="text-xs text-gray-500 break-words">📍 {item.tokopedia_seller_location}</p>
               )}
             </div>
-            <div className="text-right">
+            <div className="flex-shrink-0 text-right">
               {item.tokopedia_price && (
                 <p className="text-lg font-semibold text-blue-600">
                   {formatPrice(item.tokopedia_price)}
@@ -565,8 +691,8 @@ function ItemCard({
 
       {showDifference && item.price_difference_percent !== undefined && (
         <div className="mt-3 pt-3 border-t border-gray-200">
-          <div className="flex items-center justify-between">
-            <div>
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
               <p className="text-sm text-gray-600">
                 Contractor: {item.contractor_unit_price ? formatPrice(item.contractor_unit_price) : '—'}
               </p>
@@ -574,7 +700,7 @@ function ItemCard({
                 Market: {item.market_unit_price ? formatPrice(item.market_unit_price) : '—'}
               </p>
             </div>
-            <div className="text-right">
+            <div className="flex-shrink-0 text-right">
               <p className="text-lg font-semibold text-red-600">
                 +{item.price_difference_percent?.toFixed(1)}%
               </p>

@@ -63,6 +63,7 @@ export interface BoQSummary {
   market_estimate: number | null;
   potential_savings: number | null;
   savings_percent: number | null;
+  priced_contractor_total: number | null;
   total_items: number;
   materials_count: number;
   labor_count: number;
