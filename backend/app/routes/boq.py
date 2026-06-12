@@ -310,12 +310,13 @@ async def get_boq_results(request: Request, job_id: str):
     priced_contractor_total = job.get("priced_contractor_total")
     market_estimate = job.get("market_estimate")
     potential_savings = job.get("potential_savings")
-    # savings_percent is stored by the processor; recompute only if DB value is
-    # absent but the required inputs are present (e.g. pre-migration rows).
+    # savings_percent is stored by the processor using comparison semantics
+    # (priced, contractor-supplied items only).  Recompute only for pre-migration
+    # rows where the DB value is absent but the required inputs are present.
     if market_estimate is not None and potential_savings is not None and priced_contractor_total is not None:
         savings_percent: Optional[float] = round(
             float(potential_savings) / float(priced_contractor_total) * 100, 1
-        )
+        ) if float(priced_contractor_total) > 0 else 0.0
     else:
         savings_percent = None
 
@@ -343,6 +344,8 @@ async def get_boq_results(request: Request, job_id: str):
             labor_count=job.get("labor_count", 0),
             owner_supply_count=job.get("owner_supply_count", 0),
             priced_count=priced_count,
+            compared_count=job.get("compared_count"),
+            shopping_list_total=job.get("shopping_list_total"),
         ),
         owner_supply_items=[BoQItemPriced(**item) for item in owner_supply_items],
         overpriced_items=[BoQItemPriced(**item) for item in overpriced_items],

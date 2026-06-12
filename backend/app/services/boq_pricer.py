@@ -217,17 +217,27 @@ def _build_match_from_cache(
 
     Uses price_median as the market unit price for comparison.
 
-    Applies a price-sanity band gate: cached confidence is fixed at 0.85
-    (pre-verified by prior scrape), so only the band check applies. If the
-    cached market price lies outside [contractor/max_price_ratio,
-    contractor*max_price_ratio], the match is rejected and returned as a
-    no-result match (search_query kept, pricing fields None, from_cache=True).
+    Applies a price-sanity band gate for non-owner-supply items: cached
+    confidence is fixed at 0.85 (pre-verified by prior scrape), so only the
+    band check applies. If the cached market price lies outside
+    [contractor/max_price_ratio, contractor*max_price_ratio], the match is
+    rejected and returned as a no-result match (search_query kept, pricing
+    fields None, from_cache=True).
+
+    For owner-supply items the price-band gate is SKIPPED entirely.  The
+    contractor price is an installation labor rate; comparing it to a material
+    purchase price is invalid (a correct material price can easily be >5×
+    the install rate).  market_unit_price / market_total are still set so the
+    caller can use them as shopping-list estimates.  price_difference and
+    price_difference_pct are set to None — that comparison is meaningless.
 
     Args:
-        item: BOQ item dict (must have 'contractor_unit_price', 'quantity').
+        item: BOQ item dict (must have 'contractor_unit_price', 'quantity',
+              and optionally 'is_owner_supply').
         query: Normalized search query.
         cache_row: Row from the materials table.
-        max_price_ratio: Maximum ratio between market and contractor prices.
+        max_price_ratio: Maximum ratio between market and contractor prices
+            (ignored for owner-supply items).
 
     Returns:
         MaterialPriceMatch with from_cache=True.
@@ -235,9 +245,13 @@ def _build_match_from_cache(
     market_price = Decimal(str(cache_row.get("price_median", 0) or 0))
     contractor_price = Decimal(str(item.get("contractor_unit_price", 0) or 0))
     quantity = Decimal(str(item.get("quantity", 0) or 0))
+    is_owner_supply = bool(item.get("is_owner_supply"))
 
-    # Price-sanity band gate for cache matches
-    if contractor_price > 0 and market_price > 0:
+    # Price-sanity band gate for cache matches.
+    # Skipped for owner-supply items: their contractor price is a labor rate,
+    # not a material price, so comparing it to a market material price is
+    # invalid — a correct material price can easily exceed the band.
+    if not is_owner_supply and contractor_price > 0 and market_price > 0:
         ratio = float(market_price / contractor_price)
         if ratio > max_price_ratio or ratio < 1.0 / max_price_ratio:
             logger.info(
@@ -253,9 +267,14 @@ def _build_match_from_cache(
 
     market_total = market_price * quantity
 
-    if contractor_price > 0:
+    # Owner-supply items: suppress price_difference fields — comparing a
+    # material market price to an installation labor rate is meaningless.
+    if is_owner_supply:
+        diff: Optional[Decimal] = None
+        diff_pct: Optional[float] = None
+    elif contractor_price > 0:
         diff = contractor_price - market_price
-        diff_pct = float(diff / contractor_price * 100)
+        diff_pct = round(float(diff / contractor_price * 100), 2)
     else:
         diff = Decimal("0")
         diff_pct = 0.0
@@ -279,7 +298,7 @@ def _build_match_from_cache(
         market_unit_price=market_price,
         market_total=market_total,
         price_difference=diff,
-        price_difference_pct=round(diff_pct, 2),
+        price_difference_pct=diff_pct,
         from_cache=True,
     )
 
@@ -639,25 +658,39 @@ def _build_match_from_scrape(
     """
     Build a MaterialPriceMatch from a BOQ item and a ranking result.
 
-    Applies a two-part quality gate before building the match:
+    Applies a quality gate before building the match.  For non-owner-supply
+    items the gate has three parts:
       1. Confidence gate: word-overlap between query and product name must be
          >= min_confidence (default 0.3). A pool fitting matching vacuum storage
          bags scores 0.0 and is rejected.
-      2. Price-sanity band: when a contractor price is available, the market
+      2. Imitation-product filter: reject sticker/wallpaper/decal products
+         matching real construction-material queries.
+      3. Price-sanity band: when a contractor price is available, the market
          price must lie within [contractor/max_price_ratio, contractor*max_price_ratio].
          Matches outside this band (e.g. -12,100% price differences) are rejected.
+
+    For owner-supply items the price-band gate (step 3) is SKIPPED.  The
+    contractor price on these lines is an installation labor rate; comparing it
+    to a material purchase price is invalid — a correct material price can
+    easily exceed the band.  The confidence and imitation gates still apply.
+    price_difference and price_difference_pct are set to None for owner-supply
+    matches because comparing a material market price to a labor rate is
+    meaningless; market_unit_price and market_total are still populated so the
+    caller can use them as shopping-list estimates.
 
     Rejected matches are returned as no-result matches (search_query kept,
     all pricing fields None, match_confidence=0.0) so they are recorded but
     do not contribute to market totals or summary statistics.
 
     Args:
-        item: BOQ item dict (must have 'contractor_unit_price', 'quantity').
+        item: BOQ item dict (must have 'contractor_unit_price', 'quantity',
+              and optionally 'is_owner_supply').
         query: Normalized search query used.
         best: A BestSellerScore object (with .product dict and .total_score),
               or None if no results found.
         min_confidence: Minimum word-overlap confidence required to accept match.
-        max_price_ratio: Maximum ratio between market and contractor prices.
+        max_price_ratio: Maximum ratio between market and contractor prices
+            (ignored for owner-supply items).
 
     Returns:
         MaterialPriceMatch with computed pricing deltas and confidence,
@@ -671,6 +704,7 @@ def _build_match_from_scrape(
     market_price = Decimal(str(product.get("price_idr", 0)))
     contractor_price = Decimal(str(item.get("contractor_unit_price", 0) or 0))
     quantity = Decimal(str(item.get("quantity", 0) or 0))
+    is_owner_supply = bool(item.get("is_owner_supply"))
 
     # Match confidence via word overlap (computed before gate check)
     search_words = set(query.lower().split())
@@ -679,7 +713,7 @@ def _build_match_from_scrape(
     overlap = len(search_words & product_words)
     confidence = overlap / max(len(search_words), 1)
 
-    # Quality gate
+    # Quality gate (1 + 2: confidence and imitation — always applied)
     rejection = None
     rejection_token = None
 
@@ -697,7 +731,11 @@ def _build_match_from_scrape(
                 rejection_token = token
                 break
 
-    if rejection is None and contractor_price > 0 and market_price > 0:
+    # Quality gate (3: price-sanity band).
+    # Skipped for owner-supply items: their contractor price is a labor rate,
+    # not a material price, so comparing it to a market material price is
+    # invalid — a correct material price can easily exceed the band.
+    if rejection is None and not is_owner_supply and contractor_price > 0 and market_price > 0:
         ratio = float(market_price / contractor_price)
         if ratio > max_price_ratio or ratio < 1.0 / max_price_ratio:
             rejection = "price_out_of_band"
@@ -717,9 +755,14 @@ def _build_match_from_scrape(
 
     market_total = market_price * quantity
 
-    if contractor_price > 0:
+    # Owner-supply items: suppress price_difference fields — comparing a
+    # material market price to an installation labor rate is meaningless.
+    if is_owner_supply:
+        diff: Optional[Decimal] = None
+        diff_pct: Optional[float] = None
+    elif contractor_price > 0:
         diff = contractor_price - market_price
-        diff_pct = float(diff / contractor_price * 100)
+        diff_pct = round(float(diff / contractor_price * 100), 2)
     else:
         diff = Decimal("0")
         diff_pct = 0.0
@@ -741,7 +784,7 @@ def _build_match_from_scrape(
         market_unit_price=market_price,
         market_total=market_total,
         price_difference=diff,
-        price_difference_pct=round(diff_pct, 2),
+        price_difference_pct=diff_pct,
         from_cache=False,
     )
 

@@ -1157,6 +1157,177 @@ class TestQuerySimplificationFallback:
 
 
 # =============================================================================
+# Owner-Supply Band-Gate Bypass Tests
+# =============================================================================
+
+
+class TestOwnerSupplyBandGateBypass:
+    """
+    Owner-supply items carry the contractor's INSTALLATION LABOR rate, not a
+    material purchase price.  Comparing a material market price to a labor rate
+    would always fail the price-band gate.  For owner-supply items the band gate
+    must be SKIPPED; confidence and imitation gates still apply.
+    """
+
+    def _run(self, items, products_by_query, **kwargs):
+        provider = MagicMock()
+        provider.batch_search_sync.return_value = products_by_query
+
+        def mock_rank(results):
+            scored = []
+            for r in results:
+                s = MagicMock()
+                s.product = r
+                s.total_score = 0.8
+                scored.append(s)
+            return scored
+
+        provider.rank_results.side_effect = mock_rank
+        return batch_price_materials(
+            items=items, provider=provider, supabase_client=MagicMock(), **kwargs
+        )
+
+    def test_owner_supply_scrape_accepted_despite_6x_ratio(self):
+        """
+        Owner-supply granit: contractor price = 110,000 (labor rate), market
+        price = 660,000 (6× contractor).  The match MUST be accepted because the
+        price-band gate is skipped for owner-supply items.
+        price_difference and price_difference_pct must be None (comparison
+        between material price and labor rate is meaningless).
+        market_unit_price and market_total must still be set (shopping-list value).
+        """
+        items = [
+            {
+                "id": "1",
+                "description": "Pas. Granit Dinding (Granit Suply By Owner)",
+                "quantity": 10.0,
+                "contractor_unit_price": 110000,
+                "is_owner_supply": True,
+            }
+        ]
+        products = {
+            "granit dinding": [
+                {"name": "Granit Dinding 60x60 Premium", "price_idr": 660000},
+            ]
+        }
+        pairs = self._run(items, products)
+        assert len(pairs) == 1
+        _, match = pairs[0]
+
+        # Band gate skipped → match accepted
+        assert match.result is not None, "Owner-supply match must be accepted despite 6× ratio"
+        # Shopping-list values must be set
+        assert match.market_unit_price == Decimal("660000")
+        assert match.market_total == Decimal("6600000")
+        # Price difference fields must be None (labor vs material comparison)
+        assert match.price_difference is None, "price_difference must be None for owner-supply"
+        assert match.price_difference_pct is None, "price_difference_pct must be None for owner-supply"
+
+    def test_non_owner_supply_6x_still_rejected(self):
+        """
+        A non-owner-supply item at 6× contractor price must still be rejected
+        by the price-band gate.
+        """
+        items = [
+            {
+                "id": "1",
+                "description": "Granit Dinding Premium",
+                "quantity": 10.0,
+                "contractor_unit_price": 110000,
+                "is_owner_supply": False,
+            }
+        ]
+        products = {
+            "granit dinding premium": [
+                {"name": "Granit Dinding Premium 60x60", "price_idr": 660000},
+            ]
+        }
+        pairs = self._run(items, products)
+        _, match = pairs[0]
+        assert match.result is None, "Non-owner-supply 6× match must still be rejected"
+
+    def test_owner_supply_cache_accepted_despite_6x_ratio(self):
+        """
+        Cache path: owner-supply item with a cached median 6× the contractor
+        (labor) price must be accepted; price_difference/pct must be None.
+        """
+        from datetime import datetime, timezone, timedelta
+        from app.services.boq_pricer import _build_match_from_cache
+
+        item = {
+            "id": "1",
+            "description": "Pas. Granit Dinding (Granit Suply By Owner)",
+            "quantity": 5.0,
+            "contractor_unit_price": 110000,
+            "is_owner_supply": True,
+        }
+        cache_row = {
+            "normalized_name": "granit dinding",
+            "price_median": 660000,  # 6× labor rate
+            "name_id": "Granit Dinding 60x60",
+            "price_updated_at": (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat(),
+        }
+
+        match = _build_match_from_cache(item, "granit dinding", cache_row, max_price_ratio=5.0)
+
+        assert match.result is not None, "Cache owner-supply match must be accepted despite 6× ratio"
+        assert match.market_unit_price == Decimal("660000")
+        assert match.market_total == Decimal("3300000")
+        assert match.price_difference is None
+        assert match.price_difference_pct is None
+
+    def test_owner_supply_imitation_still_rejected(self):
+        """
+        Skipping the band gate must not disable the imitation-product filter.
+        A wallpaper sticker returned for an owner-supply granit query must still
+        be rejected.
+        """
+        items = [
+            {
+                "id": "1",
+                "description": "Pas. Granit Dinding (Granit Suply By Owner)",
+                "quantity": 5.0,
+                "contractor_unit_price": 110000,
+                "is_owner_supply": True,
+            }
+        ]
+        products = {
+            "granit dinding": [
+                {
+                    "name": "WALLPAPER Granit Dinding Sticker PVC",
+                    "price_idr": 660000,
+                },
+            ]
+        }
+        pairs = self._run(items, products)
+        _, match = pairs[0]
+        assert match.result is None, "Imitation product must still be rejected for owner-supply items"
+
+    def test_owner_supply_low_confidence_still_rejected(self):
+        """
+        Skipping the band gate must not disable the confidence gate.
+        Zero word overlap for an owner-supply item must still be rejected.
+        """
+        items = [
+            {
+                "id": "1",
+                "description": "Pas. Granit Dinding (Granit Suply By Owner)",
+                "quantity": 5.0,
+                "contractor_unit_price": 110000,
+                "is_owner_supply": True,
+            }
+        ]
+        products = {
+            "granit dinding": [
+                {"name": "Plastik Pembungkus Makanan", "price_idr": 110000},
+            ]
+        }
+        pairs = self._run(items, products)
+        _, match = pairs[0]
+        assert match.result is None, "Low-confidence match must still be rejected for owner-supply"
+
+
+# =============================================================================
 # Scrape-Batch Progress Tests
 # =============================================================================
 

@@ -691,11 +691,21 @@ def _save_extracted_items_sync(supabase, job_id: str, extracted: ExtractedBoQDat
 def _calculate_summary_sync(supabase, job_id: str) -> None:
     """Sync version of calculating summary statistics.
 
-    Savings math is computed over the same subset of items that have a
-    market_total — keeping contractor and market totals on equal footing.
-    When zero items have been priced (priced_count == 0), writes NULL for
-    market_estimate, priced_contractor_total, potential_savings, and
-    savings_percent to signal "not enough data" to the frontend.
+    Savings comparison uses only contractor-supplied priced items (items that
+    have a market_total AND are NOT owner-supply).  Owner-supply lines carry
+    the contractor's installation labor rate, not a material purchase price;
+    comparing a material market price to a labor rate is meaningless and would
+    corrupt savings math.
+
+    Two item subsets:
+      priced_items      — all items with a tokopedia_price (owner-supply + contractor)
+      comparison_items  — priced items that are NOT owner-supply
+
+    Null semantics key off compared_count == 0 for the four comparison fields
+    (market_estimate, priced_contractor_total, potential_savings, savings_percent).
+    priced_count keeps its current meaning (total items with any market price).
+    shopping_list_total is the sum of market_total for priced owner-supply items;
+    None when no such items exist.
     """
     result = supabase.table("boq_items").select("*").eq("job_id", job_id).execute()
 
@@ -711,28 +721,48 @@ def _calculate_summary_sync(supabase, job_id: str) -> None:
         for i in items
     )
 
-    # Derive the priced subset once so both sides of the comparison use the
-    # exact same items — preventing the apples-vs-oranges savings calculation.
-    priced_items = [i for i in items if i.get("market_total")]
-
-    market_estimate = sum(
-        Decimal(str(i.get("market_total", 0) or 0))
-        for i in priced_items
-    )
-    priced_contractor_total = sum(
-        Decimal(str(i.get("contractor_total", 0) or 0))
-        for i in priced_items
-    )
-
+    # Count all items that received a market price (owner-supply + contractor-supplied).
     priced_count = sum(1 for i in items if i.get("tokopedia_price"))
 
-    # When no items were priced, write NULLs instead of misleading zeros
-    if priced_count == 0:
+    # Comparison subset: priced items that are contractor-supplied.
+    # Owner-supply items carry a labor rate on the contractor side — comparing
+    # a material market price against a labor rate is invalid and is excluded.
+    comparison_items = [
+        i for i in items
+        if i.get("market_total") and not i.get("is_owner_supply")
+    ]
+    compared_count = len(comparison_items)
+
+    # shopping_list_total: sum of market prices for priced owner-supply items.
+    owner_supply_priced = [
+        i for i in items
+        if i.get("market_total") and i.get("is_owner_supply")
+    ]
+    shopping_list_total_value: Optional[str]
+    if owner_supply_priced:
+        shopping_list_total = sum(
+            Decimal(str(i.get("market_total", 0) or 0))
+            for i in owner_supply_priced
+        )
+        shopping_list_total_value = str(shopping_list_total)
+    else:
+        shopping_list_total_value = None
+
+    # When no comparison items exist, write NULLs instead of misleading zeros.
+    if compared_count == 0:
         market_estimate_value = None
         priced_contractor_total_value = None
         potential_savings_value = None
         savings_percent_value = None
     else:
+        market_estimate = sum(
+            Decimal(str(i.get("market_total", 0) or 0))
+            for i in comparison_items
+        )
+        priced_contractor_total = sum(
+            Decimal(str(i.get("contractor_total", 0) or 0))
+            for i in comparison_items
+        )
         potential_savings = max(Decimal("0"), priced_contractor_total - market_estimate)
         savings_percent = (
             float(potential_savings / priced_contractor_total * 100)
@@ -753,6 +783,8 @@ def _calculate_summary_sync(supabase, job_id: str) -> None:
         "potential_savings": potential_savings_value,
         "savings_percent": savings_percent_value,
         "priced_count": priced_count,
+        "compared_count": compared_count,
+        "shopping_list_total": shopping_list_total_value,
     }).eq("id", job_id).execute()
 
 

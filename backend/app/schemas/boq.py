@@ -149,16 +149,18 @@ class BoQSummary(BaseModel):
     """High-level summary of BoQ analysis."""
 
     contractor_total: Decimal = Field(..., description="Total from contractor's BoQ (all items)")
-    priced_contractor_total: Optional[Decimal] = Field(None, description="Contractor total over priced-items subset only; null when no items were priced")
-    market_estimate: Optional[Decimal] = Field(None, description="Estimated market total for materials; null when no items were priced")
-    potential_savings: Optional[Decimal] = Field(None, description="Potential savings (priced_contractor_total - market_estimate); null when no items were priced")
-    savings_percent: Optional[float] = Field(None, description="Savings as percentage of priced_contractor_total; null when no items were priced")
+    priced_contractor_total: Optional[Decimal] = Field(None, description="Contractor total over comparison subset (priced, contractor-supplied); null when compared_count == 0")
+    market_estimate: Optional[Decimal] = Field(None, description="Estimated market total for comparison items; null when compared_count == 0")
+    potential_savings: Optional[Decimal] = Field(None, description="Potential savings (priced_contractor_total - market_estimate); null when compared_count == 0")
+    savings_percent: Optional[float] = Field(None, description="Savings as percentage of priced_contractor_total; null when compared_count == 0")
 
     total_items: int = Field(..., description="Total items extracted")
     materials_count: int = Field(..., description="Items classified as materials")
     labor_count: int = Field(..., description="Items classified as labor")
     owner_supply_count: int = Field(..., description="Items marked 'Supply By Owner'")
-    priced_count: int = Field(..., description="Materials with Tokopedia prices")
+    priced_count: int = Field(..., description="Materials with Tokopedia prices (all, including owner-supply)")
+    compared_count: Optional[int] = Field(None, description="Items in the savings comparison: priced AND contractor-supplied (owner-supply lines carry labor rates, not comparable)")
+    shopping_list_total: Optional[Decimal] = Field(None, description="Estimated purchase cost of priced owner-supply items (market prices); null when no owner-supply items were priced")
 
 
 class BoQMetadata(BaseModel):

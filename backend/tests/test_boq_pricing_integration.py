@@ -215,7 +215,12 @@ class TestBatchPricingWiring:
     def test_pipeline_calculates_price_difference(
         self, sample_material_items, mock_apify_products
     ):
-        """Should compute correct delta between contractor and market price."""
+        """Should compute correct delta between contractor and market price.
+
+        item-1 is owner-supply: price_difference/pct must be None (comparing
+        material market price to a labor rate is meaningless).
+        item-2 is contractor-supplied: normal price_difference applies.
+        """
         from app.services.boq_pricer import batch_price_materials
 
         provider = MagicMock()
@@ -241,12 +246,14 @@ class TestBatchPricingWiring:
             max_lookups=20,
         )
 
-        # Item 1: contractor=250000, market=195000 → diff=55000 (22%)
+        # Item 1 (is_owner_supply=True): market price IS set (shopping list),
+        # but price_difference/pct must be None (labor rate vs material price).
         granit_match = next(m for _, m in matches if "granit" in m.search_query)
-        assert granit_match.price_difference == Decimal("55000")
-        assert granit_match.price_difference_pct == 22.0
+        assert granit_match.market_unit_price == Decimal("195000"), "Shopping-list price must be set"
+        assert granit_match.price_difference is None, "price_difference must be None for owner-supply"
+        assert granit_match.price_difference_pct is None, "price_difference_pct must be None for owner-supply"
 
-        # Item 2: contractor=85000, market=72000 → diff=13000 (15.29%)
+        # Item 2 (is_owner_supply=False): contractor=85000, market=72000 → diff=13000 (15.29%)
         pipa_match = next(m for _, m in matches if "pipa" in m.search_query)
         assert pipa_match.price_difference == Decimal("13000")
         assert pipa_match.price_difference_pct == pytest.approx(15.29, abs=0.01)
@@ -311,6 +318,9 @@ class TestPersistPriceResultsWiring:
         assert update_data["tokopedia_price"] == 195000
         assert update_data["market_unit_price"] == 195000.0
         assert update_data["match_confidence"] > 0
+        # Owner-supply item: price_difference fields must be None (labor vs material)
+        assert update_data["price_difference"] is None
+        assert update_data["price_difference_percent"] is None
 
 
 class TestCalculateSummarySync:
@@ -332,37 +342,42 @@ class TestCalculateSummarySync:
         mock_update_chain.eq.return_value = mock_update_eq
         return mock_sb
 
-    def test_computes_savings_over_priced_subset_only(self):
-        """savings math must use the same item-subset for contractor and market totals.
+    def test_computes_savings_over_comparison_subset_only(self):
+        """savings math must use only contractor-supplied priced items (not owner-supply).
 
         Items:
-          - item-1 (material, priced): contractor 2,500,000 / market 1,950,000
-          - item-2 (material, priced): contractor   425,000 / market   360,000
-          - item-3 (labor,   unpriced): contractor  300,000
+          - item-1 (material, priced, owner-supply): contractor 1,000,000 (labor rate) /
+                                                     market 1,500,000 (material price)
+          - item-2 (material, priced, contractor-supplied): contractor 2,500,000 /
+                                                            market 1,950,000
+          - item-3 (labor, unpriced): contractor 300,000
 
         Expected:
-          contractor_total        = 3,225,000  (all items — unchanged "Contractor Quote" tile)
-          priced_contractor_total = 2,925,000  (only priced subset)
-          market_estimate         = 2,310,000
-          potential_savings       =   615,000  (2,925,000 − 2,310,000)
-          savings_percent         ≈ 21.03      (615,000 / 2,925,000 × 100)
+          contractor_total        = 3,800,000  (all items — unchanged "Contractor Quote" tile)
+          compared_count          = 1           (only item-2; item-1 is owner-supply)
+          priced_contractor_total = 2,500,000   (only item-2)
+          market_estimate         = 1,950,000   (only item-2)
+          potential_savings       =   550,000   (2,500,000 − 1,950,000)
+          savings_percent         = 22.0        (550,000 / 2,500,000 × 100)
+          priced_count            = 2           (item-1 + item-2 both have tokopedia_price)
+          shopping_list_total     = 1,500,000   (market price of owner-supply item-1)
         """
         from app.services.boq_processor import _calculate_summary_sync
 
         items_data = [
             {
                 "item_type": "material",
-                "is_owner_supply": True,
+                "is_owner_supply": False,
                 "contractor_total": 2500000,
                 "market_total": 1950000,
                 "tokopedia_price": 195000,
             },
             {
                 "item_type": "material",
-                "is_owner_supply": False,
-                "contractor_total": 425000,
-                "market_total": 360000,
-                "tokopedia_price": 72000,
+                "is_owner_supply": True,
+                "contractor_total": 1000000,
+                "market_total": 1500000,
+                "tokopedia_price": 150000,
             },
             {
                 "item_type": "labor",
@@ -383,22 +398,28 @@ class TestCalculateSummarySync:
         assert summary["materials_count"] == 2
         assert summary["labor_count"] == 1
         assert summary["owner_supply_count"] == 1
+        # priced_count covers ALL items with a tokopedia_price (item-1 + item-2)
         assert summary["priced_count"] == 2
+        # compared_count excludes owner-supply (only item-2)
+        assert summary["compared_count"] == 1
 
-        # Whole-document contractor total (unchanged)
-        assert Decimal(summary["contractor_total"]) == Decimal("3225000")
+        # Whole-document contractor total (all items unchanged)
+        assert Decimal(summary["contractor_total"]) == Decimal("3800000")
 
-        # Priced-subset contractor total (NEW)
-        assert Decimal(summary["priced_contractor_total"]) == Decimal("2925000")
+        # Comparison-subset contractor total (item-2 only)
+        assert Decimal(summary["priced_contractor_total"]) == Decimal("2500000")
 
-        # Market estimate = 1,950,000 + 360,000
-        assert Decimal(summary["market_estimate"]) == Decimal("2310000")
+        # Market estimate = item-2 market total only
+        assert Decimal(summary["market_estimate"]) == Decimal("1950000")
 
-        # Savings = priced_contractor_total − market_estimate
-        assert Decimal(summary["potential_savings"]) == Decimal("615000")
+        # Savings = priced_contractor_total − market_estimate (comparison subset)
+        assert Decimal(summary["potential_savings"]) == Decimal("550000")
 
-        # savings_percent = 615,000 / 2,925,000 × 100 ≈ 21.03
-        assert summary["savings_percent"] == pytest.approx(21.03, abs=0.01)
+        # savings_percent = 550,000 / 2,500,000 × 100 = 22.0
+        assert summary["savings_percent"] == pytest.approx(22.0, abs=0.01)
+
+        # shopping_list_total = market total of owner-supply priced items
+        assert Decimal(summary["shopping_list_total"]) == Decimal("1500000")
 
     def test_handles_no_priced_items(self):
         """Should write NULLs for all pricing fields when no items are priced."""
@@ -423,6 +444,53 @@ class TestCalculateSummarySync:
         assert summary["savings_percent"] is None
         assert summary["priced_contractor_total"] is None
         assert summary["priced_count"] == 0
+        assert summary["compared_count"] == 0
+        assert summary["shopping_list_total"] is None
+
+    def test_shopping_list_total_none_when_no_owner_supply_priced(self):
+        """shopping_list_total must be None when there are no priced owner-supply items."""
+        from app.services.boq_processor import _calculate_summary_sync
+
+        items_data = [
+            {
+                "item_type": "material",
+                "is_owner_supply": False,
+                "contractor_total": 2500000,
+                "market_total": 1950000,
+                "tokopedia_price": 195000,
+            },
+        ]
+
+        mock_sb = self._make_mock_sb(items_data)
+        _calculate_summary_sync(mock_sb, "job-123")
+
+        summary = mock_sb.table.return_value.update.call_args[0][0]
+        assert summary["shopping_list_total"] is None
+
+    def test_compared_count_zero_when_all_priced_are_owner_supply(self):
+        """When every priced item is owner-supply, comparison fields must be NULL."""
+        from app.services.boq_processor import _calculate_summary_sync
+
+        items_data = [
+            {
+                "item_type": "material",
+                "is_owner_supply": True,
+                "contractor_total": 1000000,
+                "market_total": 1500000,
+                "tokopedia_price": 150000,
+            },
+        ]
+
+        mock_sb = self._make_mock_sb(items_data)
+        _calculate_summary_sync(mock_sb, "job-123")
+
+        summary = mock_sb.table.return_value.update.call_args[0][0]
+        assert summary["compared_count"] == 0
+        assert summary["market_estimate"] is None
+        assert summary["priced_contractor_total"] is None
+        assert summary["potential_savings"] is None
+        assert summary["savings_percent"] is None
+        assert Decimal(summary["shopping_list_total"]) == Decimal("1500000")
 
 
 class TestNormalizeMaterialNameIntegration:

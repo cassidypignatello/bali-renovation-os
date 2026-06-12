@@ -167,10 +167,39 @@ _COMPLETED_JOB_PRICED = {
     "materials_count": 2,
     "labor_count": 1,
     "owner_supply_count": 1,
-    "contractor_total": "3225000",
-    "priced_contractor_total": "2925000",
-    "market_estimate": "2310000",
-    "potential_savings": "615000",
+    "contractor_total": "3800000",
+    "priced_contractor_total": "2500000",
+    "market_estimate": "1950000",
+    "potential_savings": "550000",
+    "compared_count": 1,
+    "shopping_list_total": "1500000",
+    "project_name": None,
+    "contractor_name": None,
+    "project_location": None,
+    "extraction_warnings": [],
+    "created_at": "2026-06-01T10:00:00",
+    "completed_at": "2026-06-01T10:05:00",
+}
+
+_COMPLETED_JOB_NO_OWNER_SUPPLY = {
+    "id": "job-no-owner-supply-001",
+    "session_id": "sess-001",
+    "filename": "test_boq_no_os.pdf",
+    "file_format": "pdf",
+    "status": "completed",
+    "progress_percent": 100,
+    "message": None,
+    "error_message": None,
+    "total_items_extracted": 2,
+    "materials_count": 1,
+    "labor_count": 1,
+    "owner_supply_count": 0,
+    "contractor_total": "2800000",
+    "priced_contractor_total": "2500000",
+    "market_estimate": "1950000",
+    "potential_savings": "550000",
+    "compared_count": 1,
+    "shopping_list_total": None,
     "project_name": None,
     "contractor_name": None,
     "project_location": None,
@@ -319,8 +348,111 @@ class TestBoQResultsEndpointPricedSummary:
         summary = response.json()["summary"]
 
         assert summary["priced_contractor_total"] is not None
-        # Stored as "2925000" string in DB, returned as numeric
         from decimal import Decimal
-        assert Decimal(str(summary["priced_contractor_total"])) == Decimal("2925000")
+        assert Decimal(str(summary["priced_contractor_total"])) == Decimal("2500000")
         # Whole-document total must still be present and different
-        assert Decimal(str(summary["contractor_total"])) == Decimal("3225000")
+        assert Decimal(str(summary["contractor_total"])) == Decimal("3800000")
+
+
+class TestBoQSummaryComparisonSplitFields:
+    """compared_count and shopping_list_total pass through schema and API."""
+
+    def test_compared_count_defaults_to_none_in_schema(self):
+        """compared_count is Optional; defaults to None when omitted."""
+        summary = BoQSummary(
+            contractor_total=Decimal("5000000"),
+            market_estimate=None,
+            potential_savings=None,
+            savings_percent=None,
+            total_items=10,
+            materials_count=8,
+            labor_count=2,
+            owner_supply_count=0,
+            priced_count=0,
+        )
+        data = summary.model_dump()
+        assert data["compared_count"] is None
+
+    def test_shopping_list_total_defaults_to_none_in_schema(self):
+        """shopping_list_total is Optional; defaults to None when omitted."""
+        summary = BoQSummary(
+            contractor_total=Decimal("5000000"),
+            market_estimate=None,
+            potential_savings=None,
+            savings_percent=None,
+            total_items=10,
+            materials_count=8,
+            labor_count=2,
+            owner_supply_count=0,
+            priced_count=0,
+        )
+        data = summary.model_dump()
+        assert data["shopping_list_total"] is None
+
+    def test_new_fields_pass_through_api_when_set(self):
+        """compared_count and shopping_list_total from DB row appear in API response."""
+        from unittest.mock import MagicMock
+
+        client = TestClient(app)
+
+        job_exec = MagicMock()
+        job_exec.data = [_COMPLETED_JOB_PRICED]
+        items_exec = MagicMock()
+        items_exec.data = []
+
+        job_chain = MagicMock()
+        job_chain.execute.return_value = job_exec
+        job_chain.select.return_value = job_chain
+        job_chain.eq.return_value = job_chain
+
+        items_chain = MagicMock()
+        items_chain.execute.return_value = items_exec
+        items_chain.select.return_value = items_chain
+        items_chain.eq.return_value = items_chain
+
+        mock_sb = MagicMock()
+        mock_sb.table.side_effect = lambda name: job_chain if name == "boq_jobs" else items_chain
+
+        with patch("app.routes.boq.get_supabase_client", return_value=mock_sb):
+            response = client.get(f"{API_PREFIX}/boq/job-priced-001/results")
+
+        assert response.status_code == 200
+        summary = response.json()["summary"]
+        assert summary["compared_count"] == 1
+        from decimal import Decimal
+        assert Decimal(str(summary["shopping_list_total"])) == Decimal("1500000")
+
+    def test_new_fields_default_none_when_absent_from_db(self):
+        """API must return null for both fields when the DB row has no column yet."""
+        from unittest.mock import MagicMock
+
+        client = TestClient(app)
+
+        job_data_no_new_cols = {k: v for k, v in _COMPLETED_JOB_PRICED.items()
+                                if k not in ("compared_count", "shopping_list_total")}
+
+        job_exec = MagicMock()
+        job_exec.data = [job_data_no_new_cols]
+        items_exec = MagicMock()
+        items_exec.data = []
+
+        job_chain = MagicMock()
+        job_chain.execute.return_value = job_exec
+        job_chain.select.return_value = job_chain
+        job_chain.eq.return_value = job_chain
+
+        items_chain = MagicMock()
+        items_chain.execute.return_value = items_exec
+        items_chain.select.return_value = items_chain
+        items_chain.eq.return_value = items_chain
+
+        mock_sb = MagicMock()
+        mock_sb.table.side_effect = lambda name: job_chain if name == "boq_jobs" else items_chain
+
+        with patch("app.routes.boq.get_supabase_client", return_value=mock_sb):
+            response = client.get(f"{API_PREFIX}/boq/job-priced-001/results")
+
+        assert response.status_code == 200
+        summary = response.json()["summary"]
+        assert summary["compared_count"] is None
+        assert summary["shopping_list_total"] is None
