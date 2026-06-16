@@ -3,7 +3,7 @@
 import { BoQUpload } from '@/components/BoQUpload';
 import { QuickPriceSearch } from '@/components/QuickPriceSearch';
 
-function SheetTab({ number, label }: { number: string; label: string }) {
+function SheetTab({ label }: { label: string }) {
   return (
     <div
       className="absolute top-0 left-6 z-10 px-3 py-1 border border-b-0 text-xs tracking-wide"
@@ -18,7 +18,7 @@ function SheetTab({ number, label }: { number: string; label: string }) {
         borderTopColor: 'var(--ink)',
       }}
     >
-      {number} — {label}
+      {label}
     </div>
   );
 }
@@ -95,7 +95,7 @@ export default function Home() {
 
         {/* Sheet 1: Audit Sheet (BoQUpload) */}
         <div className="animate-rise-2 relative mb-14">
-          <SheetTab number="№ 1" label="Upload your BoQ" />
+          <SheetTab label="Upload your BoQ" />
           <div
             className="relative"
             style={{
@@ -115,7 +115,7 @@ export default function Home() {
 
         {/* Sheet 2: Quick Price Strip */}
         <div className="animate-rise-3 relative mb-14">
-          <SheetTab number="№ 2" label="Quick price check" />
+          <SheetTab label="Quick price check" />
           <div
             className="relative"
             style={{

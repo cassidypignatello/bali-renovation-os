@@ -169,7 +169,6 @@ export function BoQUpload() {
   const [displayedPercent, setDisplayedPercent] = useState(0);
   const [results, setResults] = useState<BoQAnalysisResults | null>(null);
 
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const animIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const isProcessingRef = useRef(false);
@@ -444,20 +443,20 @@ export function BoQUpload() {
             className="grid grid-cols-2 md:grid-cols-4"
             style={{ border: '1px solid var(--rule)', borderRadius: '2px', background: 'rgba(255,255,255,0.5)' }}
           >
-            <div className="p-4 border-b md:border-b-0 border-r" style={{ borderColor: 'var(--rule)' }}>
+            <div className="min-w-0 overflow-hidden p-4 border-b md:border-b-0 border-r" style={{ borderColor: 'var(--rule)' }}>
               <div className="font-mono text-[11px] uppercase tracking-widest mb-1" style={{ color: 'var(--ink-soft)' }}>
                 Contractor Quote
               </div>
-              <div className="font-mono font-semibold text-base break-words" style={{ color: 'var(--ink)', fontVariantNumeric: 'tabular-nums' }}>
+              <div className="font-mono font-semibold whitespace-nowrap" style={{ color: 'var(--ink)', fontVariantNumeric: 'tabular-nums', fontSize: 'clamp(0.85rem,2.1vw,1rem)' }}>
                 {formatPrice(results.summary.contractor_total)}
               </div>
             </div>
-            <div className="p-4 border-b md:border-b-0 md:border-r" style={{ borderColor: 'var(--rule)' }}>
+            <div className="min-w-0 overflow-hidden p-4 border-b md:border-b-0 md:border-r" style={{ borderColor: 'var(--rule)' }}>
               <div className="font-mono text-[11px] uppercase tracking-widest mb-1" style={{ color: 'var(--ink-soft)' }}>
                 Market Estimate
               </div>
               {results.summary.market_estimate != null ? (
-                <div className="font-mono font-semibold text-base break-words" style={{ color: 'var(--ink)', fontVariantNumeric: 'tabular-nums' }}>
+                <div className="font-mono font-semibold whitespace-nowrap" style={{ color: 'var(--ink)', fontVariantNumeric: 'tabular-nums', fontSize: 'clamp(0.85rem,2.1vw,1rem)' }}>
                   {formatPrice(results.summary.market_estimate)}
                 </div>
               ) : (
@@ -466,13 +465,13 @@ export function BoQUpload() {
                 </div>
               )}
             </div>
-            <div className="p-4 border-r" style={{ background: 'var(--ink-panel)', borderColor: 'var(--rule)' }}>
+            <div className="min-w-0 overflow-hidden p-4 border-r" style={{ background: 'var(--ink-panel)', borderColor: 'var(--rule)' }}>
               <div className="font-mono text-[11px] uppercase tracking-widest mb-1" style={{ color: 'rgba(250,245,236,0.6)' }}>
                 Potential Savings
               </div>
               {results.summary.potential_savings != null ? (
                 <>
-                  <div className="font-mono font-semibold text-base break-words" style={{ color: 'var(--palm-bright)', fontVariantNumeric: 'tabular-nums' }}>
+                  <div className="font-mono font-semibold whitespace-nowrap" style={{ color: 'var(--palm-bright)', fontVariantNumeric: 'tabular-nums', fontSize: 'clamp(0.85rem,2.1vw,1rem)' }}>
                     {formatPrice(results.summary.potential_savings)}
                     {results.summary.savings_percent != null && (
                       <span className="ml-1.5 text-sm font-medium" style={{ color: 'var(--sun)' }}>
@@ -480,9 +479,11 @@ export function BoQUpload() {
                       </span>
                     )}
                   </div>
-                  <div className="font-mono text-[11px] mt-1" style={{ color: 'rgba(250,245,236,0.6)' }}>
-                    based on {results.summary.priced_count} of {results.summary.materials_count} materials
-                  </div>
+                  {results.summary.compared_count != null && results.summary.compared_count > 0 && (
+                    <div className="font-mono text-[11px] mt-1" style={{ color: 'rgba(250,245,236,0.6)' }}>
+                      based on {results.summary.compared_count} contractor-priced materials
+                    </div>
+                  )}
                 </>
               ) : (
                 <div className="font-mono text-sm" style={{ color: 'rgba(250,245,236,0.6)' }}>
@@ -490,11 +491,11 @@ export function BoQUpload() {
                 </div>
               )}
             </div>
-            <div className="p-4">
+            <div className="min-w-0 overflow-hidden p-4">
               <div className="font-mono text-[11px] uppercase tracking-widest mb-1" style={{ color: 'var(--ink-soft)' }}>
                 Items Analyzed
               </div>
-              <div className="font-mono font-semibold text-base" style={{ color: 'var(--ink)', fontVariantNumeric: 'tabular-nums' }}>
+              <div className="font-mono font-semibold whitespace-nowrap" style={{ color: 'var(--ink)', fontVariantNumeric: 'tabular-nums', fontSize: 'clamp(0.85rem,2.1vw,1rem)' }}>
                 {results.summary.priced_count}/{results.summary.materials_count}
                 <span className="ml-1 text-xs font-normal" style={{ color: 'var(--ink-soft)' }}>priced</span>
               </div>
@@ -505,7 +506,7 @@ export function BoQUpload() {
         {/* Owner Supply Items - Shopping List */}
         {results.owner_supply_items.length > 0 && (
           <div>
-            <div className="flex items-center gap-3 mb-1">
+            <div className="flex items-center gap-3 mb-1 flex-wrap">
               <h4 className="font-display font-semibold text-lg" style={{ color: 'var(--ink)' }}>
                 Your Shopping List
               </h4>
@@ -515,6 +516,14 @@ export function BoQUpload() {
               >
                 {results.owner_supply_items.length} {results.owner_supply_items.length === 1 ? 'Item' : 'Items'}
               </span>
+              {results.summary.shopping_list_total != null && (
+                <span
+                  className="font-mono text-[11px] font-medium uppercase tracking-widest px-2.5 py-0.5 rounded-full"
+                  style={{ border: '1px solid var(--sun)', color: 'var(--sun)' }}
+                >
+                  ≈ {formatPrice(results.summary.shopping_list_total)} to buy
+                </span>
+              )}
             </div>
             <p className="text-sm font-body mb-4" style={{ color: 'var(--ink-soft)' }}>
               These items are marked &quot;Supply By Owner&quot; — you need to purchase them yourself
@@ -581,10 +590,9 @@ export function BoQUpload() {
       <div
         onDrop={handleDrop}
         onDragOver={handleDragOver}
-        onClick={() => state === 'idle' && fileInputRef.current?.click()}
         className={`
           relative p-8 text-center transition-all
-          ${state === 'idle' ? 'cursor-pointer hover:bg-white/40' : ''}
+          ${state === 'idle' ? 'hover:bg-white/40' : ''}
         `}
         style={{
           border:
@@ -600,8 +608,9 @@ export function BoQUpload() {
               : 'var(--paper)',
         }}
       >
+        {/* Native label-for pattern: bulletproof file chooser in all browsers including Chrome */}
         <input
-          ref={fileInputRef}
+          id="boq-file-input"
           type="file"
           accept=".pdf,.xlsx,.xls"
           onChange={(e) => {
@@ -610,31 +619,33 @@ export function BoQUpload() {
             }
             e.target.value = '';
           }}
-          className="hidden"
+          className="sr-only"
         />
 
-        {state === 'idle' && !selectedFile && (
-          <>
-            <DocumentIcon />
-            <p className="font-display font-semibold text-xl" style={{ color: 'var(--ink)' }}>
-              Drop the quote here
-            </p>
-            <p className="font-body text-sm mt-2" style={{ color: 'var(--ink-soft)' }}>
-              PDF or Excel — exactly as the contractor sent it
-            </p>
-          </>
-        )}
-
-        {state === 'idle' && selectedFile && (
-          <>
-            <DocumentIcon ready />
-            <p className="font-mono font-medium text-sm break-words" style={{ color: 'var(--ink)' }}>
-              {selectedFile.name}
-            </p>
-            <p className="font-mono text-xs mt-2" style={{ color: 'var(--ink-soft)' }}>
-              {(selectedFile.size / 1024).toFixed(1)} KB · Ready to analyze
-            </p>
-          </>
+        {state === 'idle' && (
+          <label htmlFor="boq-file-input" className="cursor-pointer block">
+            {!selectedFile ? (
+              <>
+                <DocumentIcon />
+                <p className="font-display font-semibold text-xl" style={{ color: 'var(--ink)' }}>
+                  Drop the quote here
+                </p>
+                <p className="font-body text-sm mt-2" style={{ color: 'var(--ink-soft)' }}>
+                  PDF or Excel — exactly as the contractor sent it
+                </p>
+              </>
+            ) : (
+              <>
+                <DocumentIcon ready />
+                <p className="font-mono font-medium text-sm break-words" style={{ color: 'var(--ink)' }}>
+                  {selectedFile.name}
+                </p>
+                <p className="font-mono text-xs mt-2" style={{ color: 'var(--ink-soft)' }}>
+                  {(selectedFile.size / 1024).toFixed(1)} KB · Ready to analyze
+                </p>
+              </>
+            )}
+          </label>
         )}
 
         {(state === 'uploading' || state === 'processing') && (

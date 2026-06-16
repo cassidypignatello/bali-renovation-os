@@ -69,6 +69,8 @@ export interface BoQSummary {
   labor_count: number;
   owner_supply_count: number;
   priced_count: number;
+  compared_count: number | null;
+  shopping_list_total: number | null;
 }
 
 export interface BoQMetadata {
