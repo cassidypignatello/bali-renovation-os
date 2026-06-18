@@ -481,7 +481,7 @@ export function BoQUpload() {
                   </div>
                   {results.summary.compared_count != null && results.summary.compared_count > 0 && (
                     <div className="font-mono text-[11px] mt-1" style={{ color: 'rgba(250,245,236,0.6)' }}>
-                      based on {results.summary.compared_count} contractor-priced materials
+                      across {results.summary.compared_count} material{results.summary.compared_count === 1 ? '' : 's'} priced above market
                     </div>
                   )}
                 </>

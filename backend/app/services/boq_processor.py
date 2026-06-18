@@ -691,15 +691,23 @@ def _save_extracted_items_sync(supabase, job_id: str, extracted: ExtractedBoQDat
 def _calculate_summary_sync(supabase, job_id: str) -> None:
     """Sync version of calculating summary statistics.
 
-    Savings comparison uses only contractor-supplied priced items (items that
-    have a market_total AND are NOT owner-supply).  Owner-supply lines carry
-    the contractor's installation labor rate, not a material purchase price;
-    comparing a material market price to a labor rate is meaningless and would
-    corrupt savings math.
+    Savings comparison uses only contractor-supplied priced items whose market
+    price is BELOW the contractor price — i.e. genuine savings opportunities.
 
-    Two item subsets:
+    Two exclusions protect the savings number:
+      - Owner-supply lines carry the contractor's installation labor rate, not a
+        material purchase price; comparing a material market price to a labor
+        rate is meaningless. They go to shopping_list_total instead.
+      - Items whose market match is at or ABOVE the contractor price are dropped.
+        For supply-and-install ("Pas.") lines the contractor's rate already
+        includes the material, so a market material price above it is almost
+        always a bad match (and never a saving). Without this filter, a few
+        inflated mismatches cancel real overpricing in the aggregate and the
+        headline collapses to Rp 0 even when genuine savings exist.
+
+    Item subsets:
       priced_items      — all items with a tokopedia_price (owner-supply + contractor)
-      comparison_items  — priced items that are NOT owner-supply
+      comparison_items  — priced, contractor-supplied, market_total < contractor_total
 
     Null semantics key off compared_count == 0 for the four comparison fields
     (market_estimate, priced_contractor_total, potential_savings, savings_percent).
@@ -724,13 +732,18 @@ def _calculate_summary_sync(supabase, job_id: str) -> None:
     # Count all items that received a market price (owner-supply + contractor-supplied).
     priced_count = sum(1 for i in items if i.get("tokopedia_price"))
 
-    # Comparison subset: priced items that are contractor-supplied.
-    # Owner-supply items carry a labor rate on the contractor side — comparing
-    # a material market price against a labor rate is invalid and is excluded.
-    comparison_items = [
-        i for i in items
-        if i.get("market_total") and not i.get("is_owner_supply")
-    ]
+    # Comparison subset: priced, contractor-supplied items whose market price is
+    # below the contractor price (genuine savings). Owner-supply items (labor
+    # rates) and items matched at/above the contractor's installed rate (almost
+    # always bad matches) are both excluded — see docstring.
+    def _is_savings_item(i: dict) -> bool:
+        if not i.get("market_total") or i.get("is_owner_supply"):
+            return False
+        market = Decimal(str(i.get("market_total", 0) or 0))
+        contractor = Decimal(str(i.get("contractor_total", 0) or 0))
+        return market < contractor
+
+    comparison_items = [i for i in items if _is_savings_item(i)]
     compared_count = len(comparison_items)
 
     # shopping_list_total: sum of market prices for priced owner-supply items.

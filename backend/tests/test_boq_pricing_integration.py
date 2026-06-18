@@ -421,6 +421,59 @@ class TestCalculateSummarySync:
         # shopping_list_total = market total of owner-supply priced items
         assert Decimal(summary["shopping_list_total"]) == Decimal("1500000")
 
+    def test_excludes_above_contractor_matches_from_savings(self):
+        """Matches priced at/above the contractor rate are dropped from savings.
+
+        For supply-and-install lines the contractor rate already includes the
+        material, so a market price above it is almost always a bad match. Without
+        this exclusion, inflated mismatches cancel genuine overpricing and the
+        savings headline collapses to Rp 0 (the production bug this fixes).
+
+        Items (both contractor-supplied, both priced):
+          - item-1 GENUINE overpricing: contractor 15,871,100 / market 7,548,450
+          - item-2 BAD high-side match:  contractor  3,375,000 / market 11,250,000
+
+        Expected: only item-1 counts.
+          compared_count          = 1
+          priced_contractor_total = 15,871,100
+          market_estimate         =  7,548,450
+          potential_savings       =  8,322,650
+          savings_percent         ≈ 52.44
+        """
+        from app.services.boq_processor import _calculate_summary_sync
+
+        items_data = [
+            {
+                "item_type": "material",
+                "is_owner_supply": False,
+                "contractor_total": 15871100,
+                "market_total": 7548450,
+                "tokopedia_price": 195000,
+            },
+            {
+                "item_type": "material",
+                "is_owner_supply": False,
+                "contractor_total": 3375000,
+                "market_total": 11250000,  # market > contractor → bad match, excluded
+                "tokopedia_price": 1500000,
+            },
+        ]
+
+        mock_sb = self._make_mock_sb(items_data)
+        _calculate_summary_sync(mock_sb, "job-123")
+
+        summary = mock_sb.table.return_value.update.call_args[0][0]
+
+        # Both items are priced, but only the genuine-savings one is compared.
+        assert summary["priced_count"] == 2
+        assert summary["compared_count"] == 1
+        assert Decimal(summary["priced_contractor_total"]) == Decimal("15871100")
+        assert Decimal(summary["market_estimate"]) == Decimal("7548450")
+        assert Decimal(summary["potential_savings"]) == Decimal("8322650")
+        assert summary["savings_percent"] == pytest.approx(52.44, abs=0.01)
+        # Whole-document contractor total still includes the dropped item.
+        assert Decimal(summary["contractor_total"]) == Decimal("19246100")
+
     def test_handles_no_priced_items(self):
         """Should write NULLs for all pricing fields when no items are priced."""
         from app.services.boq_processor import _calculate_summary_sync
