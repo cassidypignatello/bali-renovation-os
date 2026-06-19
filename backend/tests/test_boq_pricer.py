@@ -993,6 +993,64 @@ class TestImitationProductFilter:
 
 
 # =============================================================================
+# Head-Noun Gate Tests
+# =============================================================================
+
+
+class TestHeadNounGate:
+    """
+    The head noun (first query token of length >= 3) must appear in the product
+    name. This catches incidental-word matches like 'atap kaca' → product 'Kanopi
+    akrilik kaca' where only the incidental word 'kaca' overlapped.
+    """
+
+    def test_rejects_when_head_noun_absent_despite_above_threshold_confidence(self):
+        """
+        Production case: 'atap kaca topian' (glass canopy) matched
+        'Void Kanopi Sliding akrilik kaca' at confidence 0.333 — 'atap' (the
+        material noun) is not in the product name. The head-noun gate must catch
+        this even though confidence 0.333 >= 0.3 floor.
+        """
+        item = {"id": "1", "description": "Atap Kaca Topian Pintu Dan Jendela",
+                "contractor_unit_price": 500000, "quantity": 10}
+        best = _make_best_seller_score(
+            name="Void Kanopi Sliding akrilik kaca",
+            price_idr=480000,
+        )
+        match = _build_match_from_scrape(item, "atap kaca topian", best,
+                                         min_confidence=0.3, max_price_ratio=5.0)
+        assert match.result is None, "head-noun 'atap' not in product → must be rejected"
+        assert match.match_confidence == 0.0
+
+    def test_accepts_when_head_noun_present(self):
+        """query 'granit lantai 60x60' + product 'Granit Lantai 60x60 Glossy' → accepted, confidence 1.0."""
+        item = {"id": "1", "description": "Granit Lantai 60x60",
+                "contractor_unit_price": 200000, "quantity": 2}
+        best = _make_best_seller_score(
+            name="Granit Lantai 60x60 Glossy",
+            price_idr=190000,
+        )
+        match = _build_match_from_scrape(item, "granit lantai 60x60", best,
+                                         min_confidence=0.3, max_price_ratio=5.0)
+        assert match.result is not None
+        assert match.match_confidence == 1.0
+
+    def test_gate_passes_when_no_token_of_length_3_or_more(self):
+        """When the query has no token >= 3 chars, the gate cannot judge and must pass."""
+        item = {"id": "1", "description": "AC",
+                "contractor_unit_price": 100000, "quantity": 1}
+        # Query "ac" has no token of len >= 3; head-noun gate must pass
+        best = _make_best_seller_score(
+            name="AC Split Unit",
+            price_idr=95000,
+        )
+        match = _build_match_from_scrape(item, "ac", best,
+                                         min_confidence=0.0, max_price_ratio=5.0)
+        # Head-noun gate passes; match accepted (confidence 0.0 only matters against min_confidence=0.0)
+        assert match.result is not None
+
+
+# =============================================================================
 # F6: Query-Simplification Fallback Tests
 # =============================================================================
 

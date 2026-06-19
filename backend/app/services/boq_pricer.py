@@ -32,6 +32,65 @@ from app.integrations.marketplace import (
 
 logger = structlog.get_logger()
 
+
+def _match_confidence(query: str, product_name: str) -> float:
+    """Word-overlap confidence: fraction of query words present in the product name."""
+    search_words = set(query.lower().split())
+    product_words = set((product_name or "").lower().split())
+    if not search_words:
+        return 0.0
+    return len(search_words & product_words) / len(search_words)
+
+
+def _head_noun_present(query: str, product_name: str) -> bool:
+    """
+    True if the query's head noun (first token of length >= 3) appears as a whole
+    word in the product name. Indonesian BoQ material descriptions lead with the
+    material noun (granit, batu, atap, pipa, rangka, keramik, kusen...), so a
+    match whose product name lacks that noun is almost always wrong. When the
+    query has no token of length >= 3, the gate passes (cannot judge).
+    """
+    head = next((w for w in query.lower().split() if len(w) >= 3), None)
+    if head is None:
+        return True
+    return head in set((product_name or "").lower().split())
+
+
+def _evaluate_match(
+    query: str,
+    product_name: str,
+    market_price: Decimal,
+    contractor_price: Decimal,
+    is_owner_supply: bool,
+    min_confidence: float,
+    max_price_ratio: float,
+) -> tuple[float, Optional[str], Optional[str]]:
+    """
+    Returns (confidence, rejection_reason, rejection_detail).
+    rejection_reason is None when the match is accepted.
+
+    Gate order: head-noun -> confidence floor -> imitation -> price band.
+    The price-band gate is skipped for owner-supply items (their contractor
+    price is a labor rate, not a material price).
+    """
+    confidence = _match_confidence(query, product_name)
+    pname = (product_name or "").lower()
+    qlow = query.lower()
+
+    if not _head_noun_present(query, product_name):
+        return confidence, "head_noun_missing", None
+    if confidence < min_confidence:
+        return confidence, "low_confidence", None
+    for token in IMITATION_TOKENS:
+        if token in pname and token not in qlow:
+            return confidence, "imitation_product", token
+    if not is_owner_supply and contractor_price > 0 and market_price > 0:
+        ratio = float(market_price / contractor_price)
+        if ratio > max_price_ratio or ratio < 1.0 / max_price_ratio:
+            return confidence, "price_out_of_band", None
+    return confidence, None, None
+
+
 CACHE_TTL_DAYS = 7
 CACHE_STATS_PRICE_BAND = 4.0  # Intra-scrape outlier filter (candidate vs best price). Distinct from boq_match_max_price_ratio, which compares market vs contractor price.
 
@@ -211,18 +270,18 @@ def _build_match_from_cache(
     query: str,
     cache_row: dict,
     max_price_ratio: float = 5.0,
+    min_confidence: float = 0.3,
 ) -> MaterialPriceMatch:
     """
     Build a MaterialPriceMatch from a cached materials table row.
 
     Uses price_median as the market unit price for comparison.
 
-    Applies a price-sanity band gate for non-owner-supply items: cached
-    confidence is fixed at 0.85 (pre-verified by prior scrape), so only the
-    band check applies. If the cached market price lies outside
-    [contractor/max_price_ratio, contractor*max_price_ratio], the match is
-    rejected and returned as a no-result match (search_query kept, pricing
-    fields None, from_cache=True).
+    Applies the full quality gate (head-noun, confidence, imitation, price band)
+    via _evaluate_match — identical to the scrape path. The product name is read
+    from cached_product_name (written at scrape time) falling back to name_id /
+    name_en / query. Confidence is computed from the real product name, not a
+    fixed 0.85, so cache and scrape judge matches by the same criteria.
 
     For owner-supply items the price-band gate is SKIPPED entirely.  The
     contractor price is an installation labor rate; comparing it to a material
@@ -238,6 +297,7 @@ def _build_match_from_cache(
         cache_row: Row from the materials table.
         max_price_ratio: Maximum ratio between market and contractor prices
             (ignored for owner-supply items).
+        min_confidence: Minimum word-overlap confidence required to accept match.
 
     Returns:
         MaterialPriceMatch with from_cache=True.
@@ -247,23 +307,31 @@ def _build_match_from_cache(
     quantity = Decimal(str(item.get("quantity", 0) or 0))
     is_owner_supply = bool(item.get("is_owner_supply"))
 
-    # Price-sanity band gate for cache matches.
-    # Skipped for owner-supply items: their contractor price is a labor rate,
-    # not a material price, so comparing it to a market material price is
-    # invalid — a correct material price can easily exceed the band.
-    if not is_owner_supply and contractor_price > 0 and market_price > 0:
-        ratio = float(market_price / contractor_price)
-        if ratio > max_price_ratio or ratio < 1.0 / max_price_ratio:
-            logger.info(
-                "boq_match_rejected",
-                query=query,
-                reason="price_out_of_band",
-                confidence=0.85,
-                market_price=int(market_price),
-                contractor_price=int(contractor_price),
-                source="cache",
-            )
-            return _no_result_match(query, from_cache=True)
+    product_name = (
+        cache_row.get("cached_product_name")
+        or cache_row.get("name_id")
+        or cache_row.get("name_en")
+        or query
+    )
+
+    confidence, rejection, rejection_token = _evaluate_match(
+        query, product_name, market_price, contractor_price,
+        is_owner_supply, min_confidence, max_price_ratio,
+    )
+
+    if rejection is not None:
+        log_kwargs: dict = dict(
+            query=query,
+            reason=rejection,
+            confidence=round(confidence, 2),
+            market_price=int(market_price),
+            contractor_price=int(contractor_price),
+            source="cache",
+        )
+        if rejection_token is not None:
+            log_kwargs["imitation_token"] = rejection_token
+        logger.info("boq_match_rejected", **log_kwargs)
+        return _no_result_match(query, from_cache=True)
 
     market_total = market_price * quantity
 
@@ -279,8 +347,6 @@ def _build_match_from_cache(
         diff = Decimal("0")
         diff_pct = 0.0
 
-    product_name = cache_row.get("name_id") or cache_row.get("name_en") or query
-
     return MaterialPriceMatch(
         search_query=query,
         result=MarketplaceResult(
@@ -294,7 +360,7 @@ def _build_match_from_cache(
             best_seller_score=0.0,
             source=MarketplaceSource.CACHED,
         ),
-        match_confidence=0.85,  # cache match is pre-verified
+        match_confidence=min(confidence, 1.0),
         market_unit_price=market_price,
         market_total=market_total,
         price_difference=diff,
@@ -394,6 +460,7 @@ def _write_cache(
         "rating_sample_size": len(ratings),
         "count_sold_total": sum(sold_counts),
         "tokopedia_affiliate_url": best_product.get("url") or best_product.get("link") or "",
+        "cached_product_name": best_product.get("name") or best_product.get("title") or "",
     }
 
     try:
@@ -521,7 +588,7 @@ def batch_price_materials(
     # --- Process cache hits (instant, 40% → 55%) ---
     for idx, (i, item) in enumerate(cached_items):
         cache_row = cache_hits[item["_cache_key"]]
-        matches[i] = _build_match_from_cache(item, item["_search_query"], cache_row, max_price_ratio=max_price_ratio)
+        matches[i] = _build_match_from_cache(item, item["_search_query"], cache_row, max_price_ratio=max_price_ratio, min_confidence=min_confidence)
 
         if progress_callback and total > 0:
             # Cache hits use the 40-55% range
@@ -562,8 +629,8 @@ def batch_price_materials(
 
             matches[i] = _build_match_from_scrape(item, query, best, min_confidence=min_confidence, max_price_ratio=max_price_ratio)
 
-            # Write to cache for next time
-            if best is not None:
+            # Only cache accepted matches — bad matches are rejected by the gate
+            if best is not None and matches[i].result is not None:
                 _write_cache(
                     supabase_client,
                     query,
@@ -611,8 +678,8 @@ def batch_price_materials(
                 )
                 matches[i] = match
 
-                # Write fallback results to cache using simplified key
-                if best is not None:
+                # Only cache accepted matches — bad matches are rejected by the gate
+                if best is not None and match.result is not None:
                     simplified_cache_key = canonicalize_for_cache(simplified)
                     _write_cache(
                         supabase_client,
@@ -706,39 +773,12 @@ def _build_match_from_scrape(
     quantity = Decimal(str(item.get("quantity", 0) or 0))
     is_owner_supply = bool(item.get("is_owner_supply"))
 
-    # Match confidence via word overlap (computed before gate check)
-    search_words = set(query.lower().split())
     product_name = product.get("name") or product.get("title") or ""
-    product_words = set(product_name.lower().split())
-    overlap = len(search_words & product_words)
-    confidence = overlap / max(len(search_words), 1)
 
-    # Quality gate (1 + 2: confidence and imitation — always applied)
-    rejection = None
-    rejection_token = None
-
-    product_name_lower = product_name.lower()
-    query_lower = query.lower()
-
-    if confidence < min_confidence:
-        rejection = "low_confidence"
-    else:
-        # Imitation-product filter: reject sticker/wallpaper/decal products
-        # matching real construction-material queries.
-        for token in IMITATION_TOKENS:
-            if token in product_name_lower and token not in query_lower:
-                rejection = "imitation_product"
-                rejection_token = token
-                break
-
-    # Quality gate (3: price-sanity band).
-    # Skipped for owner-supply items: their contractor price is a labor rate,
-    # not a material price, so comparing it to a market material price is
-    # invalid — a correct material price can easily exceed the band.
-    if rejection is None and not is_owner_supply and contractor_price > 0 and market_price > 0:
-        ratio = float(market_price / contractor_price)
-        if ratio > max_price_ratio or ratio < 1.0 / max_price_ratio:
-            rejection = "price_out_of_band"
+    confidence, rejection, rejection_token = _evaluate_match(
+        query, product_name, market_price, contractor_price,
+        is_owner_supply, min_confidence, max_price_ratio,
+    )
 
     if rejection is not None:
         log_kwargs: dict = dict(

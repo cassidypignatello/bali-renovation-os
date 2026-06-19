@@ -217,7 +217,9 @@ class TestBuildMatchFromCache:
 
         assert match.result.source == MarketplaceSource.CACHED
 
-    def test_has_high_confidence(self):
+    def test_confidence_computed_from_product_name(self):
+        # Confidence is now computed from the real product name, not fixed at 0.85.
+        # query="test", cached_product_name absent, name_id="Test" → overlap=1/1=1.0
         from app.services.boq_pricer import _build_match_from_cache
 
         item = {"contractor_unit_price": 100000, "quantity": 1}
@@ -225,7 +227,7 @@ class TestBuildMatchFromCache:
 
         match = _build_match_from_cache(item, "test", cache_row)
 
-        assert match.match_confidence == 0.85
+        assert match.match_confidence == 1.0
 
 
 # =============================================================================
@@ -664,3 +666,140 @@ class TestBatchPriceMaterialsWithCache:
         # Should have progress values in both ranges
         assert len(progress_values) >= 2
         assert all(40 <= v <= 85 for v in progress_values)
+
+
+# =============================================================================
+# Cache: Real Confidence, Head-Noun Gate, cached_product_name
+# =============================================================================
+
+
+class TestCacheRealConfidenceAndHeadNoun:
+    """
+    Cache matches now go through the same full gate as scrape matches:
+    head-noun, confidence floor, imitation, price band.
+    Confidence is computed from the real product name (cached_product_name),
+    not a fixed 0.85.
+    """
+
+    def test_cache_confidence_is_real_not_fixed(self):
+        """Cache row with cached_product_name matching query → confidence 1.0, not 0.85."""
+        from app.services.boq_pricer import _build_match_from_cache
+
+        item = {"contractor_unit_price": 200000, "quantity": 2}
+        cache_row = {
+            "price_median": 190000,
+            "cached_product_name": "Granit Lantai 60x60 Glossy",
+            "name_id": "granit lantai 60x60",
+        }
+
+        match = _build_match_from_cache(item, "granit lantai 60x60", cache_row)
+
+        assert match.result is not None
+        assert match.match_confidence == 1.0
+
+    def test_cache_rejects_when_head_noun_missing_from_cached_product_name(self):
+        """cached_product_name lacking head noun → rejected via head-noun gate."""
+        from app.services.boq_pricer import _build_match_from_cache
+
+        item = {"contractor_unit_price": 500000, "quantity": 1}
+        cache_row = {
+            "price_median": 480000,
+            "cached_product_name": "Void Kanopi Sliding akrilik kaca",
+            "name_id": "atap kaca topian",
+        }
+
+        match = _build_match_from_cache(item, "atap kaca topian", cache_row)
+
+        assert match.result is None, "Head noun 'atap' absent from cached_product_name → reject"
+        assert match.from_cache is True
+
+    def test_cache_uses_cached_product_name_for_display(self):
+        """result.product_name comes from cached_product_name, not name_id."""
+        from app.services.boq_pricer import _build_match_from_cache
+
+        item = {"contractor_unit_price": 100000, "quantity": 1}
+        cache_row = {
+            "price_median": 90000,
+            "cached_product_name": "Granit Dinding 60x60 Polished",
+            "name_id": "granit dinding 60x60",
+        }
+
+        match = _build_match_from_cache(item, "granit dinding 60x60", cache_row)
+
+        assert match.result is not None
+        assert match.result.product_name == "Granit Dinding 60x60 Polished"
+
+    def test_cache_falls_back_to_name_id_when_cached_product_name_absent(self):
+        """Without cached_product_name, falls back to name_id for product display."""
+        from app.services.boq_pricer import _build_match_from_cache
+
+        item = {"contractor_unit_price": 100000, "quantity": 1}
+        cache_row = {
+            "price_median": 90000,
+            "name_id": "Granit Dinding 60x60",
+        }
+
+        match = _build_match_from_cache(item, "granit dinding 60x60", cache_row)
+
+        assert match.result is not None
+        assert match.result.product_name == "Granit Dinding 60x60"
+
+
+class TestCacheWriteGating:
+    """
+    _write_cache must only be called for accepted matches — rejected matches
+    (e.g. head noun missing) must not be written to the cache.
+    """
+
+    def _make_provider_with_ranked(self, products_by_query: dict) -> MagicMock:
+        provider = MagicMock()
+        provider.batch_search_sync.return_value = products_by_query
+
+        def mock_rank(results):
+            scored = []
+            for r in results:
+                s = MagicMock()
+                s.product = r
+                s.total_score = 0.8
+                scored.append(s)
+            return scored
+
+        provider.rank_results.side_effect = mock_rank
+        return provider
+
+    def test_rejected_scrape_does_not_write_cache(self):
+        """When the best product fails the head-noun gate, _write_cache must NOT be called."""
+        from app.services.boq_pricer import batch_price_materials
+
+        items = [
+            {
+                "id": "1",
+                "description": "Atap Kaca Topian Pintu Dan Jendela",
+                "contractor_unit_price": 500000,
+                "quantity": 10,
+            }
+        ]
+        # Product name lacks the head noun "atap"
+        products = {
+            "atap kaca topian": [
+                {"name": "Void Kanopi Sliding akrilik kaca", "price_idr": 480000},
+            ]
+        }
+        provider = self._make_provider_with_ranked(products)
+
+        mock_sb = MagicMock()
+        # No cache hits
+        cache_result = MagicMock()
+        cache_result.data = []
+        mock_sb.table.return_value.select.return_value.in_.return_value.execute.return_value = cache_result
+
+        pairs = batch_price_materials(
+            items=items, provider=provider, supabase_client=mock_sb,
+        )
+
+        _, match = pairs[0]
+        assert match.result is None, "Head-noun gate should reject this match"
+
+        # _write_cache calls the materials table via update(); must not have happened
+        update_calls = mock_sb.table.return_value.update.call_args_list
+        assert len(update_calls) == 0, "No cache write should occur for rejected matches"
