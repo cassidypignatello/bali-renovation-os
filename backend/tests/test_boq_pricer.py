@@ -1587,3 +1587,31 @@ class TestTokenizationPunctuation:
     def test_dimension_token_preserved(self):
         from app.services.boq_pricer import _tokenize
         assert "60x60" in _tokenize("Granit Lantai 60x60")
+
+
+class TestHeadNounPrecisionBias:
+    """Documents the deliberate precision bias of the head-noun gate.
+
+    The gate requires the query's head noun as a whole word in the product
+    name. This intentionally drops spelling/synonym variants (e.g. plywood vs
+    triplek, gypsum vs gipsum) rather than risk a wrong match feeding the
+    customer-facing savings number. These assertions pin that tradeoff so any
+    future softening (e.g. a synonym map) is a conscious change, and so the
+    coverage cost is visible. Monitor production `boq_match_rejected` logs with
+    reason=head_noun_missing to quantify real-world impact.
+    """
+
+    def test_synonym_head_noun_is_rejected(self):
+        from app.services.boq_pricer import _head_noun_present
+        # "plywood" query vs Indonesian-named equivalent → dropped (precision bias).
+        assert _head_noun_present("plywood 9mm", "Triplek 9mm 122x244") is False
+
+    def test_spelling_variant_head_noun_is_rejected(self):
+        from app.services.boq_pricer import _head_noun_present
+        # Spelling variant gipsum/gypsum → dropped (precision bias).
+        assert _head_noun_present("gypsum board 9mm", "Gipsum Jayaboard 9mm") is False
+
+    def test_exact_head_noun_still_accepted(self):
+        from app.services.boq_pricer import _head_noun_present
+        # The common case — exact material noun present — is unaffected.
+        assert _head_noun_present("gypsum board 9mm", "Gypsum Jayaboard 9mm") is True
