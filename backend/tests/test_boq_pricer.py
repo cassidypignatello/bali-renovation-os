@@ -1556,3 +1556,34 @@ class TestScrapeBatchProgress:
         # Cache hit path: emits 40+int(15*1/1)=55 for the cache item, then 85 at end
         assert 85 in progress
         provider.batch_search_sync.assert_not_called()
+
+
+class TestTokenizationPunctuation:
+    """Head-noun and confidence must survive punctuation-joined marketplace titles."""
+
+    def test_head_noun_found_across_hyphen(self):
+        from app.services.boq_pricer import _head_noun_present
+        # "granit" must be found even when the title fuses it with a hyphen.
+        assert _head_noun_present("granit lantai 60x60", "Granit-Lantai 60x60 Glossy") is True
+
+    def test_head_noun_found_across_pipe(self):
+        from app.services.boq_pricer import _head_noun_present
+        assert _head_noun_present("pipa pvc", "Pipa|PVC Rucika 4 inch") is True
+
+    def test_head_noun_still_absent_when_truly_missing(self):
+        from app.services.boq_pricer import _head_noun_present
+        # The production false-positive: glass canopy query vs sliding-canopy product.
+        assert _head_noun_present(
+            "atap kaca topian pintu dan jendela",
+            "Void Kanopi Sliding akrilik kaca | awning transparan",
+        ) is False
+
+    def test_confidence_counts_punctuation_joined_words(self):
+        from app.services.boq_pricer import _match_confidence
+        # All three query words present despite hyphen/comma fusion in the title.
+        c = _match_confidence("granit lantai 60x60", "Granit-Lantai, 60x60 Premium")
+        assert c == 1.0
+
+    def test_dimension_token_preserved(self):
+        from app.services.boq_pricer import _tokenize
+        assert "60x60" in _tokenize("Granit Lantai 60x60")

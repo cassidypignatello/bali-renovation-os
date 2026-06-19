@@ -33,10 +33,23 @@ from app.integrations.marketplace import (
 logger = structlog.get_logger()
 
 
+def _tokenize(text: str) -> list[str]:
+    """
+    Lowercase word tokens split on any non-alphanumeric boundary.
+
+    Marketplace titles are punctuation-heavy ("Granit-Lantai", "kaca|awning",
+    "PVC, 4 inch"); plain str.split() only breaks on whitespace, which would
+    fuse "granit" into "granit-lantai" and hide it from whole-word matching,
+    falsely rejecting good matches. Splitting on \\W keeps dimensions intact
+    ("60x60" stays one token) while separating punctuation-joined words.
+    """
+    return re.findall(r"\w+", (text or "").lower())
+
+
 def _match_confidence(query: str, product_name: str) -> float:
     """Word-overlap confidence: fraction of query words present in the product name."""
-    search_words = set(query.lower().split())
-    product_words = set((product_name or "").lower().split())
+    search_words = set(_tokenize(query))
+    product_words = set(_tokenize(product_name))
     if not search_words:
         return 0.0
     return len(search_words & product_words) / len(search_words)
@@ -50,10 +63,10 @@ def _head_noun_present(query: str, product_name: str) -> bool:
     match whose product name lacks that noun is almost always wrong. When the
     query has no token of length >= 3, the gate passes (cannot judge).
     """
-    head = next((w for w in query.lower().split() if len(w) >= 3), None)
+    head = next((w for w in _tokenize(query) if len(w) >= 3), None)
     if head is None:
         return True
-    return head in set((product_name or "").lower().split())
+    return head in set(_tokenize(product_name))
 
 
 def _evaluate_match(
