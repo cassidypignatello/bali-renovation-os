@@ -246,9 +246,9 @@ class TokopediaProvider(MarketplaceProvider):
             results: Raw product dicts.
 
         Returns:
-            List of BestSellerScore objects sorted by score descending.
+            List of BestSellerScore objects sorted by score descending (all candidates, untruncated — the BoQ candidate walk needs the full list).
         """
-        return rank_best_sellers(results)
+        return rank_best_sellers(results, top_n=len(results))
 
     def batch_search_sync(
         self,
@@ -392,9 +392,9 @@ class MockMarketplaceProvider(MarketplaceProvider):
             results: Product dicts from search_sync.
 
         Returns:
-            List of BestSellerScore objects.
+            List of BestSellerScore objects sorted by score descending (all candidates, untruncated — the BoQ candidate walk needs the full list).
         """
-        return rank_best_sellers(results)
+        return rank_best_sellers(results, top_n=len(results))
 
     def batch_search_sync(
         self,
