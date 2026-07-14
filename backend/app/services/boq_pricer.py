@@ -218,14 +218,34 @@ def _strip_context(query: str) -> str:
     return re.sub(r"\s+", " ", result).strip()
 
 
+# Tokopedia is Indonesian-first: searching the ID term returns better
+# candidates AND makes the head-noun gate pass naturally for EN queries.
+EN_ID_SYNONYMS = {
+    "plywood": "triplek",
+    "gypsum": "gipsum",
+    "cement": "semen",
+    "paint": "cat",
+    "glass": "kaca",
+    "wood": "kayu",
+    "door": "pintu",
+    "window": "jendela",
+}
+
+
+def _rewrite_synonyms(query: str) -> str:
+    """Token-wise EN→ID rewrite using the bounded synonym map."""
+    return " ".join(EN_ID_SYNONYMS.get(word, word) for word in query.split())
+
+
 def build_search_query(description: str) -> str:
     """
     Build a marketplace search query from a raw BoQ description.
 
     Wraps normalize_material_name, then strips brand suffixes and
     room/context phrases so polluted queries stop dragging irrelevant
-    products into the candidate pool. Context phrases in head position are
-    never stripped (head-token guard).
+    products into the candidate pool, then rewrites bare English material
+    nouns to their Indonesian marketplace equivalents. Context phrases in
+    head position are never stripped (head-token guard).
 
     Args:
         description: Raw material description from the BOQ.
@@ -236,6 +256,7 @@ def build_search_query(description: str) -> str:
     query = normalize_material_name(description)
     query = re.sub(r"\s+", " ", _BRAND_STRIP_RE.sub(" ", query)).strip()
     query = _strip_context(query)
+    query = _rewrite_synonyms(query)
     return query
 
 
@@ -631,7 +652,7 @@ def batch_price_materials(
     # --- Prepare priceable items ---
     priceable: list[dict] = []
     for item in items:
-        query = normalize_material_name(item.get("description", ""))
+        query = build_search_query(item.get("description", ""))
         if len(query) < 3:
             continue
         cache_key = canonicalize_for_cache(query)

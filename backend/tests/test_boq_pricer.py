@@ -219,6 +219,74 @@ class TestBuildSearchQueryContextStrip:
             == "keramik dinding"
         )
 
+    def test_multi_word_context_phrase_in_head_position_kept_whole(self):
+        from app.services.boq_pricer import build_search_query
+        # 'kolam renang' is a two-word CONTEXT_TOKENS phrase; when it leads the
+        # query the head-token guard must keep the whole phrase, not just the
+        # first word of it.
+        assert (
+            build_search_query("Kolam Renang Keramik Lantai")
+            == "kolam renang keramik lantai"
+        )
+
+
+class TestBuildSearchQuerySynonyms:
+    """English material nouns are rewritten to Indonesian marketplace terms."""
+
+    def test_plywood_rewritten_to_triplek(self):
+        from app.services.boq_pricer import build_search_query
+        assert build_search_query("Plywood 9mm") == "triplek 9mm"
+
+    def test_gypsum_rewritten_to_gipsum(self):
+        from app.services.boq_pricer import build_search_query
+        assert build_search_query("Gypsum Board 9mm") == "gipsum board 9mm"
+
+    def test_indonesian_query_unchanged(self):
+        from app.services.boq_pricer import build_search_query
+        assert build_search_query("Triplek 9mm") == "triplek 9mm"
+
+    def test_full_chain_brand_context_synonym(self):
+        from app.services.boq_pricer import build_search_query
+        assert (
+            build_search_query("Pas. Plywood Dinding Kolam Renang Ex Romance")
+            == "triplek dinding"
+        )
+
+
+class TestPipelineUsesCleanedQueries:
+    """batch_price_materials must search with build_search_query output."""
+
+    @staticmethod
+    def _mock_rank(results):
+        scored = []
+        for r in results:
+            s = MagicMock()
+            s.product = r
+            s.total_score = 0.8
+            scored.append(s)
+        return scored
+
+    def test_pipeline_searches_with_cleaned_query(self):
+        items = [{"id": "1", "description": "Keramik Dinding Kolam Renang Ex Romance",
+                  "contractor_unit_price": 120000, "quantity": 5}]
+        provider = MagicMock()
+        provider.batch_search_sync.return_value = {
+            "keramik dinding": [
+                {"name": "Keramik Dinding 25x40 Glossy", "price_idr": 115000},
+            ]
+        }
+        provider.rank_results.side_effect = self._mock_rank
+
+        pairs = batch_price_materials(
+            items=items, provider=provider, supabase_client=MagicMock(),
+        )
+
+        first_call_queries = provider.batch_search_sync.call_args_list[0][0][0]
+        assert first_call_queries == ["keramik dinding"]
+        _, match = pairs[0]
+        assert match.result is not None
+        assert match.search_query == "keramik dinding"
+
 
 class TestNormalizeShortQuerySkipped:
     """Tests that short queries (< 3 chars) are skipped in batch processing."""
@@ -986,6 +1054,7 @@ class TestImitationProductFilter:
             return scored
 
         provider.rank_results.side_effect = mock_rank
+        self._last_provider = provider
         return batch_price_materials(
             items=items, provider=provider, supabase_client=MagicMock(), **kwargs
         )
@@ -998,7 +1067,7 @@ class TestImitationProductFilter:
         items = [{"id": "1", "description": "Granit Dinding Kolam Renang",
                   "contractor_unit_price": 180000, "quantity": 10}]
         products = {
-            "granit dinding kolam renang": [
+            "granit dinding": [
                 {
                     "name": (
                         "280CM X 120CM MARBLE GRANIT GULUNG BESAR PVC "
@@ -1012,6 +1081,8 @@ class TestImitationProductFilter:
         _, match = pairs[0]
         assert match.result is None, "Wallpaper sticker must not match a granit query"
         assert match.match_confidence == 0.0
+        # Anti-vacuous: the candidate list must have reached ranking/gating.
+        assert self._last_provider.rank_results.call_count >= 1
 
     def test_legitimate_granit_product_not_rejected(self):
         """A real granite product must still be accepted for a granit query."""
@@ -1315,14 +1386,14 @@ class TestQuerySimplificationFallback:
         return provider
 
     def test_five_word_query_retried_with_three_word_simplified(self):
-        """A 5-word query that returns nothing is retried with its first 3 words."""
+        """A query that returns nothing is retried once with a simplified query (cleaned 2-token query → head noun)."""
         items = [{"id": "1",
                   "description": "Keramik Dinding Kolam Renang Ex Romance",
                   "contractor_unit_price": 120000,
                   "quantity": 5}]
 
-        first = {"keramik dinding kolam renang ex romance": []}
-        second = {"keramik dinding kolam": [
+        first = {"keramik dinding": []}
+        second = {"keramik": [
             {"name": "Keramik Dinding Kolam Renang 25x40", "price_idr": 115000},
         ]}
 
@@ -1336,11 +1407,11 @@ class TestQuerySimplificationFallback:
         assert provider.batch_search_sync.call_count == 2
         # Second call must use the simplified query
         second_call_queries = provider.batch_search_sync.call_args_list[1][0][0]
-        assert second_call_queries == ["keramik dinding kolam"]
+        assert second_call_queries == ["keramik"]
 
         _, match = pairs[0]
         assert match.result is not None
-        assert match.search_query == "keramik dinding kolam"
+        assert match.search_query == "keramik"
 
     def test_one_word_query_not_retried(self):
         """A single-token query cannot be broadened — no retry."""
@@ -1378,10 +1449,10 @@ class TestQuerySimplificationFallback:
             "granit lantai 60x60": [
                 {"name": "Granit Lantai 60x60 Glossy", "price_idr": 190000},
             ],
-            "keramik dinding kolam renang premium": [],
+            "keramik dinding premium": [],
         }
         second = {
-            "keramik dinding kolam": [
+            "keramik dinding": [
                 {"name": "Keramik Dinding Kolam 25x40", "price_idr": 85000},
             ],
         }
@@ -1404,7 +1475,7 @@ class TestQuerySimplificationFallback:
 
         # Item 2 matched via fallback
         assert results["2"].result is not None
-        assert results["2"].search_query == "keramik dinding kolam"
+        assert results["2"].search_query == "keramik dinding"
 
     def test_fallback_no_results_still_no_match(self):
         """If the retry also returns nothing, the item stays as a no-result match."""
@@ -1892,9 +1963,11 @@ class TestHeadNounPrecisionBias:
     The gate requires the query's head noun as a whole word in the product
     name. This intentionally drops spelling/synonym variants (e.g. plywood vs
     triplek, gypsum vs gipsum) rather than risk a wrong match feeding the
-    customer-facing savings number. These assertions pin that tradeoff so any
-    future softening (e.g. a synonym map) is a conscious change, and so the
-    coverage cost is visible. Monitor production `boq_match_rejected` logs with
+    customer-facing savings number. A synonym map now exists at the QUERY
+    layer (EN_ID_SYNONYMS in build_search_query) — EN queries are rewritten
+    to ID before search, so these gate-level rejections apply only to product
+    names that reach the gate untranslated. The gate itself remains
+    synonym-blind by design. Monitor production `boq_match_rejected` logs with
     reason=head_noun_missing to quantify real-world impact.
     """
 
