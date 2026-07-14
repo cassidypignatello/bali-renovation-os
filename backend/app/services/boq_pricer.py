@@ -634,21 +634,20 @@ def batch_price_materials(
             query = item["_search_query"]
             candidates = raw_results.get(query, [])
 
-            if candidates:
-                ranked = provider.rank_results(candidates)
-                best = ranked[0] if ranked else None
-            else:
-                best = None
+            ranked = provider.rank_results(candidates) if candidates else []
+            match, accepted = _walk_candidates(
+                item, query, ranked,
+                min_confidence=min_confidence, max_price_ratio=max_price_ratio,
+            )
+            matches[i] = match
 
-            matches[i] = _build_match_from_scrape(item, query, best, min_confidence=min_confidence, max_price_ratio=max_price_ratio)
-
-            # Only cache accepted matches — bad matches are rejected by the gate
-            if best is not None and matches[i].result is not None:
+            # Only cache accepted matches — cache truth follows gate truth
+            if accepted is not None and match.result is not None:
                 _write_cache(
                     supabase_client,
                     query,
                     item["_cache_key"],
-                    best.product,
+                    accepted.product,
                     candidates,
                     unit=item.get("unit"),
                 )
@@ -676,29 +675,23 @@ def batch_price_materials(
             for i, item, simplified in fallback_needed:
                 candidates = fallback_results.get(simplified, [])
 
-                if candidates:
-                    ranked = provider.rank_results(candidates)
-                    best = ranked[0] if ranked else None
-                else:
-                    best = None
-
-                # Build match against the simplified query so confidence
-                # is computed against the words we actually searched.
-                match = _build_match_from_scrape(
-                    item, simplified, best,
-                    min_confidence=min_confidence,
-                    max_price_ratio=max_price_ratio,
+                ranked = provider.rank_results(candidates) if candidates else []
+                # Match against the simplified query so confidence is computed
+                # against the words we actually searched.
+                match, accepted = _walk_candidates(
+                    item, simplified, ranked,
+                    min_confidence=min_confidence, max_price_ratio=max_price_ratio,
                 )
                 matches[i] = match
 
-                # Only cache accepted matches — bad matches are rejected by the gate
-                if best is not None and match.result is not None:
+                # Only cache accepted matches — cache truth follows gate truth
+                if accepted is not None and match.result is not None:
                     simplified_cache_key = canonicalize_for_cache(simplified)
                     _write_cache(
                         supabase_client,
                         simplified,
                         simplified_cache_key,
-                        best.product,
+                        accepted.product,
                         candidates,
                         unit=item.get("unit"),
                     )

@@ -9,7 +9,7 @@ Uses mocks exclusively - no real API calls or Supabase writes.
 from __future__ import annotations
 
 from decimal import Decimal
-from unittest.mock import MagicMock, call
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 
@@ -1107,6 +1107,81 @@ class TestWalkCandidates:
 
         assert match.result is not None
         assert accepted is good
+
+
+class TestCandidateWalkPipeline:
+    """batch_price_materials must judge every ranked candidate, not just ranked[0]."""
+
+    @staticmethod
+    def _mock_rank(results):
+        scored = []
+        for r in results:
+            s = MagicMock()
+            s.product = r
+            s.total_score = 0.8
+            scored.append(s)
+        return scored
+
+    def _provider(self, results_by_query):
+        provider = MagicMock()
+        provider.batch_search_sync.return_value = results_by_query
+        provider.rank_results.side_effect = self._mock_rank
+        return provider
+
+    def test_second_ranked_candidate_priced_when_top_is_junk(self):
+        items = [{"id": "1", "description": "Granit Dinding 60x60",
+                  "contractor_unit_price": 200000, "quantity": 10}]
+        provider = self._provider({
+            "granit dinding 60x60": [
+                {"name": "Vacuum Storage Bag Jumbo", "price_idr": 150000},
+                {"name": "Granit Dinding 60x60 Glossy", "price_idr": 190000},
+            ]
+        })
+
+        pairs = batch_price_materials(
+            items=items, provider=provider, supabase_client=MagicMock(),
+        )
+
+        _, match = pairs[0]
+        assert match.result is not None
+        assert match.result.product_name == "Granit Dinding 60x60 Glossy"
+
+    def test_cache_write_receives_accepted_candidate(self):
+        items = [{"id": "1", "description": "Granit Dinding 60x60",
+                  "contractor_unit_price": 200000, "quantity": 10}]
+        provider = self._provider({
+            "granit dinding 60x60": [
+                {"name": "Vacuum Storage Bag Jumbo", "price_idr": 150000},
+                {"name": "Granit Dinding 60x60 Glossy", "price_idr": 190000},
+            ]
+        })
+
+        with patch("app.services.boq_pricer._write_cache") as mock_wc:
+            batch_price_materials(
+                items=items, provider=provider, supabase_client=MagicMock(),
+            )
+
+        assert mock_wc.call_count == 1
+        best_product = mock_wc.call_args[0][3]
+        assert best_product["name"] == "Granit Dinding 60x60 Glossy"
+
+    def test_no_cache_write_when_all_candidates_rejected(self):
+        items = [{"id": "1", "description": "Granit Dinding 60x60",
+                  "contractor_unit_price": 200000, "quantity": 10}]
+        provider = self._provider({
+            "granit dinding 60x60": [
+                {"name": "Vacuum Storage Bag Jumbo", "price_idr": 150000},
+            ]
+        })
+
+        with patch("app.services.boq_pricer._write_cache") as mock_wc:
+            pairs = batch_price_materials(
+                items=items, provider=provider, supabase_client=MagicMock(),
+            )
+
+        mock_wc.assert_not_called()
+        _, match = pairs[0]
+        assert match.result is None
 
 
 # =============================================================================
