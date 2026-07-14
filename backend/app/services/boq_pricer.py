@@ -172,6 +172,33 @@ def normalize_material_name(description: str) -> str:
     return result
 
 
+# Brand markers in Indonesian BoQs ("granit ex Roman" = "Roman brand or
+# equivalent"). The strip removes the marker and following alpha words but
+# stops at dimension-like tokens (60x60, 9mm), which stay in the query.
+_BRAND_STRIP_RE = re.compile(
+    r"\b(?:ex|eks|setara|merk|merek)\b\.?\s+(?:[a-z]+\b\s*)*",
+    re.IGNORECASE,
+)
+
+
+def build_search_query(description: str) -> str:
+    """
+    Build a marketplace search query from a raw BoQ description.
+
+    Wraps normalize_material_name, then strips brand suffixes so polluted
+    queries stop dragging irrelevant products into the candidate pool.
+
+    Args:
+        description: Raw material description from the BOQ.
+
+    Returns:
+        Cleaned, lowercased search query string.
+    """
+    query = normalize_material_name(description)
+    query = _BRAND_STRIP_RE.sub(" ", query)
+    return re.sub(r"\s+", " ", query).strip()
+
+
 def canonicalize_for_cache(normalized_name: str) -> str:
     """
     Canonicalize a normalized material name for cache key lookup.

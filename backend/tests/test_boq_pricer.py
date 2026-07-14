@@ -151,6 +151,40 @@ class TestNormalizeMaterialName:
         assert result == "granit lantai premium"
 
 
+class TestBuildSearchQueryBrandStrip:
+    """Brand markers (ex/eks/setara/merk/merek) and trailing brand words are stripped."""
+
+    def test_ex_brand_stripped_dimension_preserved(self):
+        from app.services.boq_pricer import build_search_query
+        assert build_search_query("Granit Ex Roman 60x60") == "granit 60x60"
+
+    def test_setara_brand_stripped_to_end(self):
+        from app.services.boq_pricer import build_search_query
+        # Descriptor loss ('putih') is an accepted tradeoff — generalizes the
+        # query, never touches the head noun.
+        assert build_search_query("Cat Setara Jotun Putih") == "cat"
+
+    def test_ex_with_dot_stripped(self):
+        from app.services.boq_pricer import build_search_query
+        assert build_search_query("Keramik Lantai Ex. Romance") == "keramik lantai"
+
+    def test_merk_stripped(self):
+        from app.services.boq_pricer import build_search_query
+        assert build_search_query("Semen Merk Tiga Roda") == "semen"
+
+    def test_no_marker_unchanged(self):
+        from app.services.boq_pricer import build_search_query
+        assert build_search_query("Granit Dinding 60x60") == "granit dinding 60x60"
+
+    def test_ex_inside_word_not_stripped(self):
+        from app.services.boq_pricer import build_search_query
+        assert build_search_query("Kayu Expose 4x6") == "kayu expose 4x6"
+
+    def test_normalization_still_applied(self):
+        from app.services.boq_pricer import build_search_query
+        assert build_search_query("Pas. Granit Ex Roman 60x60") == "granit 60x60"
+
+
 class TestNormalizeShortQuerySkipped:
     """Tests that short queries (< 3 chars) are skipped in batch processing."""
 
