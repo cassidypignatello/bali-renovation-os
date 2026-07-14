@@ -181,12 +181,51 @@ _BRAND_STRIP_RE = re.compile(
 )
 
 
+# Room/location phrases that pollute marketplace searches. Whole-phrase,
+# word-boundary matches only. Deliberately EXCLUDED: product head nouns
+# (toilet, dapur, pantry) and product-type qualifiers (dinding, lantai) —
+# stripping those would behead queries and defeat the head-noun gate.
+CONTEXT_TOKENS = [
+    "kolam renang",
+    "balancing tank",
+    "ruang mesin",
+    "kamar mandi",
+    "kamar tidur",
+    "main entrance",
+    "carport",
+    "garasi",
+    "gudang",
+    "teras",
+    "balkon",
+    "rooftop",
+    "koridor",
+]
+
+_CONTEXT_RES = [
+    re.compile(rf"\b{re.escape(phrase)}\b", re.IGNORECASE)
+    for phrase in CONTEXT_TOKENS
+]
+
+
+def _strip_context(query: str) -> str:
+    """Remove context phrases, except in head position (head-token guard)."""
+    result = query
+    for pattern in _CONTEXT_RES:
+        result = pattern.sub(
+            lambda m: m.group(0) if m.start() == 0 else " ",
+            result,
+        )
+    return re.sub(r"\s+", " ", result).strip()
+
+
 def build_search_query(description: str) -> str:
     """
     Build a marketplace search query from a raw BoQ description.
 
-    Wraps normalize_material_name, then strips brand suffixes so polluted
-    queries stop dragging irrelevant products into the candidate pool.
+    Wraps normalize_material_name, then strips brand suffixes and
+    room/context phrases so polluted queries stop dragging irrelevant
+    products into the candidate pool. Context phrases in head position are
+    never stripped (head-token guard).
 
     Args:
         description: Raw material description from the BOQ.
@@ -195,8 +234,9 @@ def build_search_query(description: str) -> str:
         Cleaned, lowercased search query string.
     """
     query = normalize_material_name(description)
-    query = _BRAND_STRIP_RE.sub(" ", query)
-    return re.sub(r"\s+", " ", query).strip()
+    query = re.sub(r"\s+", " ", _BRAND_STRIP_RE.sub(" ", query)).strip()
+    query = _strip_context(query)
+    return query
 
 
 def canonicalize_for_cache(normalized_name: str) -> str:

@@ -185,6 +185,41 @@ class TestBuildSearchQueryBrandStrip:
         assert build_search_query("Pas. Granit Ex Roman 60x60") == "granit 60x60"
 
 
+class TestBuildSearchQueryContextStrip:
+    """Room/location phrases are stripped; head-position tokens never are."""
+
+    def test_kolam_renang_stripped(self):
+        from app.services.boq_pricer import build_search_query
+        assert build_search_query("Keramik Lantai Kolam Renang") == "keramik lantai"
+
+    def test_balancing_tank_stripped(self):
+        from app.services.boq_pricer import build_search_query
+        assert build_search_query("Keramik Lantai Balancing Tank") == "keramik lantai"
+
+    def test_kamar_mandi_stripped(self):
+        from app.services.boq_pricer import build_search_query
+        assert build_search_query("Granit Dinding Kamar Mandi 60x60") == "granit dinding 60x60"
+
+    def test_context_word_in_head_position_never_stripped(self):
+        from app.services.boq_pricer import build_search_query
+        # 'gudang' is in CONTEXT_TOKENS but leads this query — the guard keeps it.
+        assert build_search_query("Gudang Prefab Baja") == "gudang prefab baja"
+
+    def test_product_nouns_excluded_from_context_tokens(self):
+        from app.services.boq_pricer import CONTEXT_TOKENS, build_search_query
+        # toilet/dapur/pantry are purchasable products, never stripped.
+        for noun in ("toilet", "dapur", "pantry", "dinding", "lantai"):
+            assert noun not in CONTEXT_TOKENS
+        assert build_search_query("Toilet Duduk Mono") == "toilet duduk mono"
+
+    def test_brand_and_context_combined(self):
+        from app.services.boq_pricer import build_search_query
+        assert (
+            build_search_query("Keramik Dinding Kolam Renang Ex Romance")
+            == "keramik dinding"
+        )
+
+
 class TestNormalizeShortQuerySkipped:
     """Tests that short queries (< 3 chars) are skipped in batch processing."""
 
