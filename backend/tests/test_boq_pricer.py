@@ -1051,6 +1051,65 @@ class TestHeadNounGate:
 
 
 # =============================================================================
+# _walk_candidates Tests
+# =============================================================================
+
+
+class TestWalkCandidates:
+    """_walk_candidates: first gate-passing candidate wins; none pass -> no-result."""
+
+    def _item(self, **overrides):
+        item = {"id": "1", "description": "Granit Dinding 60x60",
+                "contractor_unit_price": 200000, "quantity": 10}
+        item.update(overrides)
+        return item
+
+    def test_accepts_first_passing_candidate(self):
+        from app.services.boq_pricer import _walk_candidates
+        junk = _make_best_seller_score(name="Vacuum Storage Bag Jumbo", price_idr=150000)
+        good = _make_best_seller_score(name="Granit Dinding 60x60 Glossy", price_idr=190000)
+
+        match, accepted = _walk_candidates(self._item(), "granit dinding 60x60", [junk, good])
+
+        assert match.result is not None
+        assert match.result.product_name == "Granit Dinding 60x60 Glossy"
+        assert accepted is good
+
+    def test_all_rejected_returns_no_result_and_none(self):
+        from app.services.boq_pricer import _walk_candidates
+        junk1 = _make_best_seller_score(name="Vacuum Storage Bag Jumbo", price_idr=150000)
+        junk2 = _make_best_seller_score(name="Kursi Plastik Serbaguna", price_idr=160000)
+
+        match, accepted = _walk_candidates(self._item(), "granit dinding 60x60", [junk1, junk2])
+
+        assert match.result is None
+        assert match.match_confidence == 0.0
+        assert accepted is None
+
+    def test_empty_ranked_list_returns_no_result(self):
+        from app.services.boq_pricer import _walk_candidates
+
+        match, accepted = _walk_candidates(self._item(), "granit dinding 60x60", [])
+
+        assert match.result is None
+        assert accepted is None
+
+    def test_candidate_beyond_rank_five_reachable(self):
+        """Pins the truncation fix end-to-end: rank 7 of 7 must be reachable."""
+        from app.services.boq_pricer import _walk_candidates
+        junk = [
+            _make_best_seller_score(name=f"Kursi Plastik Model {i}", price_idr=150000)
+            for i in range(6)
+        ]
+        good = _make_best_seller_score(name="Granit Dinding 60x60 Polished", price_idr=190000)
+
+        match, accepted = _walk_candidates(self._item(), "granit dinding 60x60", junk + [good])
+
+        assert match.result is not None
+        assert accepted is good
+
+
+# =============================================================================
 # F6: Query-Simplification Fallback Tests
 # =============================================================================
 

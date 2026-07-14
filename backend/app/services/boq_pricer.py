@@ -842,6 +842,53 @@ def _build_match_from_scrape(
     )
 
 
+def _walk_candidates(
+    item: dict,
+    query: str,
+    ranked: list,
+    min_confidence: float = 0.3,
+    max_price_ratio: float = 5.0,
+) -> tuple[MaterialPriceMatch, Optional["BestSellerScore"]]:
+    """
+    Walk ranked candidates through the quality gate; first acceptance wins.
+
+    rank_results orders by best-seller score (price/rating/sales), not by
+    relevance to the query — the top-scored product is often a popular but
+    wrong item while a true match sits lower. Judging every candidate with
+    the unchanged _build_match_from_scrape gate recovers those matches
+    without loosening the gate itself.
+
+    Args:
+        item: BOQ item dict (same contract as _build_match_from_scrape).
+        query: Normalized search query.
+        ranked: BestSellerScore list from provider.rank_results (may be empty).
+        min_confidence: Passed through to the gate.
+        max_price_ratio: Passed through to the gate.
+
+    Returns:
+        (match, accepted): the first accepted match and its candidate, or
+        (no-result match, None) when no candidate passes the gate.
+    """
+    for rank, candidate in enumerate(ranked, start=1):
+        match = _build_match_from_scrape(
+            item, query, candidate,
+            min_confidence=min_confidence, max_price_ratio=max_price_ratio,
+        )
+        if match.result is not None:
+            logger.info(
+                "boq_candidate_walk",
+                query=query, candidates_evaluated=rank, accepted_rank=rank,
+            )
+            return match, candidate
+
+    if ranked:
+        logger.info(
+            "boq_candidate_walk",
+            query=query, candidates_evaluated=len(ranked), all_rejected=True,
+        )
+    return _no_result_match(query, from_cache=False), None
+
+
 # =============================================================================
 # Persistence
 # =============================================================================
