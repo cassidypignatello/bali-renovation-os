@@ -24,6 +24,7 @@ from app.services.boq_pricer import (
     persist_price_results,
     _build_match_from_scrape,
     simplify_query,
+    canonicalize_for_cache,
     IMITATION_TOKENS,
 )
 
@@ -412,9 +413,17 @@ class TestBatchPriceMaterialsCallsProvider:
             "granit dinding premium": [{"name": "Granit Dinding Premium", "price_idr": 150000}],
             "pipa pvc 4 inch": [{"name": "Pipa PVC 4 inch", "price_idr": 30000}],
         }
-        mock_provider.rank_results.return_value = [
-            _make_best_seller_score(name="Granit Dinding Premium", price_idr=150000),
-        ]
+
+        def mock_rank(results):
+            scored = []
+            for r in results:
+                s = MagicMock()
+                s.product = r
+                s.total_score = 0.8
+                scored.append(s)
+            return scored
+
+        mock_provider.rank_results.side_effect = mock_rank
 
         batch_price_materials(
             items=items,
@@ -1198,12 +1207,12 @@ class TestSimplifyQuery:
     def test_exactly_four_words_returns_three(self):
         assert simplify_query("granit dinding 60x60 premium") == "granit dinding 60x60"
 
-    def test_three_word_query_returns_empty(self):
-        """A 3-word query cannot be meaningfully simplified — return '' to skip retry."""
-        assert simplify_query("granit dinding 60x60") == ""
+    def test_three_word_query_drops_last_token(self):
+        """2-3 token queries broaden by dropping the trailing qualifier (head noun kept)."""
+        assert simplify_query("granit dinding 60x60") == "granit dinding"
 
-    def test_two_word_query_returns_empty(self):
-        assert simplify_query("granit dinding") == ""
+    def test_two_word_query_drops_last_token(self):
+        assert simplify_query("granit dinding") == "granit"
 
     def test_one_word_query_returns_empty(self):
         assert simplify_query("granit") == ""
@@ -1215,7 +1224,8 @@ class TestSimplifyQuery:
 class TestQuerySimplificationFallback:
     """
     When the first scrape returns zero candidates for a query, a ONE-time
-    retry is made with the first 3 tokens of the query (F6 fix).
+    retry is made with a simplified query — first 3 tokens, or last token
+    dropped for 2-3-token queries (F6 fix + coverage retry).
     """
 
     def _make_provider(self, first_results: dict, second_results: dict) -> MagicMock:
@@ -1263,12 +1273,12 @@ class TestQuerySimplificationFallback:
         assert match.result is not None
         assert match.search_query == "keramik dinding kolam"
 
-    def test_short_query_not_retried(self):
-        """A query of 3 words or fewer that returns nothing is NOT retried."""
-        items = [{"id": "1", "description": "Granit Dinding",
+    def test_one_word_query_not_retried(self):
+        """A single-token query cannot be broadened — no retry."""
+        items = [{"id": "1", "description": "Granit",
                   "contractor_unit_price": 200000, "quantity": 2}]
 
-        first = {"granit dinding": []}
+        first = {"granit": []}
         provider = MagicMock()
         provider.batch_search_sync.return_value = first
         provider.rank_results.return_value = []
@@ -1279,7 +1289,6 @@ class TestQuerySimplificationFallback:
             supabase_client=MagicMock(),
         )
 
-        # Only one call — no retry for a 2-word query
         assert provider.batch_search_sync.call_count == 1
         _, match = pairs[0]
         assert match.result is None
@@ -1346,6 +1355,91 @@ class TestQuerySimplificationFallback:
         assert provider.batch_search_sync.call_count == 2
         _, match = pairs[0]
         assert match.result is None
+
+
+class TestRetryOnAllRejected:
+    """Items whose candidates were ALL gate-rejected get the one-round simplified retry."""
+
+    @staticmethod
+    def _mock_rank(results):
+        scored = []
+        for r in results:
+            s = MagicMock()
+            s.product = r
+            s.total_score = 0.8
+            scored.append(s)
+        return scored
+
+    def _provider(self, first, second):
+        provider = MagicMock()
+        provider.batch_search_sync.side_effect = [first, second]
+        provider.rank_results.side_effect = self._mock_rank
+        return provider
+
+    def test_all_rejected_item_retried_with_simplified_query(self):
+        items = [{"id": "1", "description": "Granit Dinding Premium Import",
+                  "contractor_unit_price": 200000, "quantity": 2}]
+        first = {"granit dinding premium import": [
+            {"name": "Kursi Plastik Serbaguna", "price_idr": 190000},
+        ]}
+        second = {"granit dinding premium": [
+            {"name": "Granit Dinding Premium 60x60", "price_idr": 195000},
+        ]}
+
+        provider = self._provider(first, second)
+        pairs = batch_price_materials(
+            items=items, provider=provider, supabase_client=MagicMock(),
+        )
+
+        assert provider.batch_search_sync.call_count == 2
+        second_call_queries = provider.batch_search_sync.call_args_list[1][0][0]
+        assert second_call_queries == ["granit dinding premium"]
+
+        _, match = pairs[0]
+        assert match.result is not None
+        assert match.search_query == "granit dinding premium"
+
+    def test_two_word_all_rejected_retried_with_head_noun(self):
+        """The drop-last-token rule makes the retry fire even for short cleaned queries."""
+        items = [{"id": "1", "description": "Granit Dinding",
+                  "contractor_unit_price": 200000, "quantity": 2}]
+        first = {"granit dinding": [
+            {"name": "Kursi Plastik Serbaguna", "price_idr": 190000},
+        ]}
+        second = {"granit": [
+            {"name": "Granit Alam 60x60", "price_idr": 195000},
+        ]}
+
+        provider = self._provider(first, second)
+        pairs = batch_price_materials(
+            items=items, provider=provider, supabase_client=MagicMock(),
+        )
+
+        assert provider.batch_search_sync.call_count == 2
+        assert provider.batch_search_sync.call_args_list[1][0][0] == ["granit"]
+        _, match = pairs[0]
+        assert match.result is not None
+
+    def test_accepted_retry_cached_under_simplified_key(self):
+        items = [{"id": "1", "description": "Granit Dinding",
+                  "contractor_unit_price": 200000, "quantity": 2}]
+        first = {"granit dinding": [
+            {"name": "Kursi Plastik Serbaguna", "price_idr": 190000},
+        ]}
+        second = {"granit": [
+            {"name": "Granit Alam 60x60", "price_idr": 195000},
+        ]}
+
+        provider = self._provider(first, second)
+        with patch("app.services.boq_pricer._write_cache") as mock_wc:
+            batch_price_materials(
+                items=items, provider=provider, supabase_client=MagicMock(),
+            )
+
+        assert mock_wc.call_count == 1
+        args = mock_wc.call_args[0]
+        assert args[1] == "granit"                      # query written
+        assert args[2] == canonicalize_for_cache("granit")  # cache key
 
 
 # =============================================================================

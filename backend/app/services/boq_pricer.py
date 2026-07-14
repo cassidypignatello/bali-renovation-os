@@ -191,17 +191,23 @@ def canonicalize_for_cache(normalized_name: str) -> str:
 
 def simplify_query(query: str) -> str:
     """
-    Broaden a search query that returned nothing.
+    Broaden a search query for the one-round fallback retry.
 
-    Keeps the first three tokens (Indonesian material queries lead with the
-    material noun: 'keramik dinding kolam renang ex romance' → 'keramik
-    dinding kolam'). Returns '' when simplification wouldn't change anything,
-    signalling the caller to skip the retry.
+    Indonesian material queries lead with the material noun, so broadening
+    drops trailing qualifiers and never the head: >3 tokens keeps the first
+    three ('keramik dinding kolam renang ex romance' → 'keramik dinding
+    kolam'); 2-3 tokens drop the last token ('granit dinding' → 'granit').
+    Returns '' when nothing can be dropped (single token), signalling the
+    caller to skip the retry. Note: a single-token retry neutralizes the
+    confidence gate (any product containing the token scores 1.0) — the
+    head-noun, imitation, and price-band gates remain the effective filters.
     """
     words = query.split()
-    if len(words) <= 3:
-        return ""
-    return " ".join(words[:3])
+    if len(words) > 3:
+        return " ".join(words[:3])
+    if len(words) >= 2:
+        return " ".join(words[:-1])
+    return ""
 
 
 # =============================================================================
@@ -627,8 +633,8 @@ def batch_price_materials(
             batch_progress=_on_batch_progress,
         )
 
-        # First pass: build matches, track which items got zero candidates
-        fallback_needed: list[tuple[int, dict, str]] = []  # (matches-index, item, simplified_query)
+        # First pass: build matches, track which items need a fallback retry
+        fallback_needed: list[tuple[int, dict, str, str]] = []  # (matches-index, item, simplified_query, reason)
 
         for idx, (i, item) in enumerate(uncached_items):
             query = item["_search_query"]
@@ -652,27 +658,34 @@ def batch_price_materials(
                     unit=item.get("unit"),
                 )
 
-            # Track items that got no candidates for fallback retry
-            if not candidates:
+            # Track items with no accepted match for fallback retry (zero
+            # candidates, or all candidates gate-rejected)
+            if matches[i].result is None:
                 simplified = simplify_query(query)
                 if simplified:
-                    fallback_needed.append((i, item, simplified))
+                    reason = "no_candidates" if not candidates else "all_rejected"
+                    fallback_needed.append((i, item, simplified, reason))
 
             if progress_callback and total > 0:
                 # Per-item post-processing uses the 80-85% range
                 pct = 80 + int(5 * (idx + 1) / n_uncached)
                 progress_callback(min(pct, 85))
 
-        # One-round query-simplification fallback for zero-candidate items
+        # One-round query-simplification fallback for zero-candidate and
+        # all-rejected items
         if fallback_needed:
+            reason_counts: dict[str, int] = {}
+            for _, _, _, reason in fallback_needed:
+                reason_counts[reason] = reason_counts.get(reason, 0) + 1
             logger.info(
                 "boq_query_fallback",
                 count=len(fallback_needed),
+                reasons=reason_counts,
             )
-            simplified_queries = [sq for _, _, sq in fallback_needed]
+            simplified_queries = [sq for _, _, sq, _ in fallback_needed]
             fallback_results = provider.batch_search_sync(simplified_queries, limit_per_query=10)
 
-            for i, item, simplified in fallback_needed:
+            for i, item, simplified, _reason in fallback_needed:
                 candidates = fallback_results.get(simplified, [])
 
                 ranked = provider.rank_results(candidates) if candidates else []
