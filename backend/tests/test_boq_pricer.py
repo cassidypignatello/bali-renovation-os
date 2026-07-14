@@ -1244,7 +1244,7 @@ class TestWalkCandidates:
         assert accepted is None
 
     def test_candidate_beyond_rank_five_reachable(self):
-        """Pins the truncation fix end-to-end: rank 7 of 7 must be reachable."""
+        """Unit test pinning that _walk_candidates does not truncate the ranked list: rank 7 of 7 must be reachable."""
         from app.services.boq_pricer import _walk_candidates
         junk = [
             _make_best_seller_score(name=f"Kursi Plastik Model {i}", price_idr=150000)

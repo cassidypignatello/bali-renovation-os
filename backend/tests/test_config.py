@@ -34,9 +34,9 @@ class TestBoqPricingSettings:
 
     def test_boq_max_price_lookups_override(self, monkeypatch):
         """boq_max_price_lookups can be overridden via environment variable"""
-        monkeypatch.setenv("BOQ_MAX_PRICE_LOOKUPS", "50")
+        monkeypatch.setenv("BOQ_MAX_PRICE_LOOKUPS", "15")
         settings = Settings(**REQUIRED_SETTINGS)
-        assert settings.boq_max_price_lookups == 50
+        assert settings.boq_max_price_lookups == 15
 
     def test_marketplace_provider_override(self, monkeypatch):
         """marketplace_provider can be overridden via environment variable"""

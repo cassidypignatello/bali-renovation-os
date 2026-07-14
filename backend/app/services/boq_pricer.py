@@ -625,14 +625,16 @@ def batch_price_materials(
     Main pipeline entry point. Runs fully synchronously.
 
     Steps:
-      1. Normalize material names into search queries.
+      1. Build search queries via build_search_query (normalize + strip
+         brand/context + EN->ID synonym rewrite).
       2. Skip items whose normalized query is < 3 characters.
       3. Prioritize owner_supply items first, then others.
       4. Cap at max_lookups.
       5. Check Supabase materials cache for fresh prices.
       6. Scrape marketplace only for cache misses.
       7. Write scrape results back to cache.
-      8. For each result: rank candidates, pick best, calculate delta.
+      8. For each result: rank candidates, then walk them in order and take
+         the first that passes the quality gate; calculate delta.
       9. Apply quality gate: reject matches below min_confidence or outside
          the price-sanity band [contractor/max_price_ratio, contractor*max_price_ratio].
 
@@ -939,7 +941,7 @@ def _build_match_from_scrape(
 def _walk_candidates(
     item: dict,
     query: str,
-    ranked: list,
+    ranked: list["BestSellerScore"],
     min_confidence: float = 0.3,
     max_price_ratio: float = 5.0,
 ) -> tuple[MaterialPriceMatch, Optional["BestSellerScore"]]:
