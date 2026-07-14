@@ -23,9 +23,9 @@ class TestBoqPricingSettings:
     """Tests for BOQ pricing configuration settings"""
 
     def test_boq_max_price_lookups_default(self):
-        """boq_max_price_lookups defaults to 20"""
+        """boq_max_price_lookups defaults to 50 — a typical BoQ is fully attempted."""
         settings = Settings(**REQUIRED_SETTINGS)
-        assert settings.boq_max_price_lookups == 20
+        assert settings.boq_max_price_lookups == 50
 
     def test_marketplace_provider_default(self):
         """marketplace_provider defaults to 'tokopedia'"""
