@@ -12,8 +12,9 @@ class TestItemNumberCap:
     """
 
     def test_long_item_number_capped_to_20(self):
-        item = BoQItemBase(item_number="A.1.2.3.4.5.6.7.8.9.10.11.12", description="x")
-        assert len(item.item_number) <= 20
+        raw = "A.1.2.3.4.5.6.7.8.9.10.11.12"
+        item = BoQItemBase(item_number=raw, description="x")
+        assert item.item_number == raw[:20]
 
     def test_short_item_number_unchanged(self):
         item = BoQItemBase(item_number="A.1", description="x")
@@ -25,5 +26,6 @@ class TestItemNumberCap:
 
     def test_cap_applies_through_extracted_subclass(self):
         # The extracted subclass is what the persistence path constructs.
-        item = BoQItemExtracted(item_number="X" * 50, description="x")
-        assert len(item.item_number) <= 20
+        raw = "X" * 50
+        item = BoQItemExtracted(item_number=raw, description="x")
+        assert item.item_number == raw[:20]

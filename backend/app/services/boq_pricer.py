@@ -21,7 +21,7 @@ import re
 import structlog
 from datetime import datetime, timezone, timedelta
 from decimal import Decimal
-from typing import Callable, Optional
+from typing import TYPE_CHECKING, Callable, Optional
 
 from app.integrations.marketplace import (
     MarketplaceProvider,
@@ -29,6 +29,9 @@ from app.integrations.marketplace import (
     MarketplaceSource,
     MaterialPriceMatch,
 )
+
+if TYPE_CHECKING:
+    from app.integrations.apify import BestSellerScore
 
 logger = structlog.get_logger()
 
