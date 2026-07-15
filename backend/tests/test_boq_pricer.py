@@ -1348,11 +1348,12 @@ class TestSimplifyQuery:
         assert simplify_query("granit dinding 60x60 premium") == "granit dinding 60x60"
 
     def test_three_word_query_drops_last_token(self):
-        """2-3 token queries broaden by dropping the trailing qualifier (head noun kept)."""
+        """A 3-token query broadens by dropping the trailing qualifier (head noun kept)."""
         assert simplify_query("granit dinding 60x60") == "granit dinding"
 
-    def test_two_word_query_drops_last_token(self):
-        assert simplify_query("granit dinding") == "granit"
+    def test_two_word_query_not_broadened(self):
+        """A 2-token query would broaden to a single token (junk-prone) — skip the retry."""
+        assert simplify_query("granit dinding") == ""
 
     def test_one_word_query_returns_empty(self):
         assert simplify_query("granit") == ""
@@ -1364,8 +1365,10 @@ class TestSimplifyQuery:
 class TestQuerySimplificationFallback:
     """
     When the first scrape returns zero candidates for a query, a ONE-time
-    retry is made with a simplified query — first 3 tokens, or last token
-    dropped for 2-3-token queries (F6 fix + coverage retry).
+    retry is made with a simplified query — first 3 tokens, or the last token
+    dropped for a 3-token query. A query that would broaden to a single token
+    is NOT retried (F6 fix + coverage retry; single-token retries removed after
+    the live run showed they produce junk).
     """
 
     def _make_provider(self, first_results: dict, second_results: dict) -> MagicMock:
@@ -1385,16 +1388,16 @@ class TestQuerySimplificationFallback:
         provider.rank_results.side_effect = mock_rank
         return provider
 
-    def test_five_word_query_retried_with_three_word_simplified(self):
-        """A query that returns nothing is retried once with a simplified query (cleaned 2-token query → head noun)."""
+    def test_long_query_retried_with_shorter_simplified(self):
+        """A query that returns nothing is retried once with a shorter (>=2-token) query."""
         items = [{"id": "1",
-                  "description": "Keramik Dinding Kolam Renang Ex Romance",
+                  "description": "Granit Dinding Motif Premium Import",
                   "contractor_unit_price": 120000,
                   "quantity": 5}]
 
-        first = {"keramik dinding": []}
-        second = {"keramik": [
-            {"name": "Keramik Dinding Kolam Renang 25x40", "price_idr": 115000},
+        first = {"granit dinding motif premium import": []}
+        second = {"granit dinding motif": [
+            {"name": "Granit Dinding Motif Kayu 60x60", "price_idr": 115000},
         ]}
 
         provider = self._make_provider(first, second)
@@ -1405,13 +1408,13 @@ class TestQuerySimplificationFallback:
         )
 
         assert provider.batch_search_sync.call_count == 2
-        # Second call must use the simplified query
+        # Second call must use the simplified query (first 3 tokens)
         second_call_queries = provider.batch_search_sync.call_args_list[1][0][0]
-        assert second_call_queries == ["keramik"]
+        assert second_call_queries == ["granit dinding motif"]
 
         _, match = pairs[0]
         assert match.result is not None
-        assert match.search_query == "keramik"
+        assert match.search_query == "granit dinding motif"
 
     def test_one_word_query_not_retried(self):
         """A single-token query cannot be broadened — no retry."""
@@ -1539,35 +1542,34 @@ class TestRetryOnAllRejected:
         assert match.result is not None
         assert match.search_query == "granit dinding premium"
 
-    def test_two_word_all_rejected_retried_with_head_noun(self):
-        """The drop-last-token rule makes the retry fire even for short cleaned queries."""
+    def test_two_word_all_rejected_not_retried(self):
+        """A 2-token all-rejected query is NOT retried — broadening it to one token
+        neutralizes the confidence gate and produces junk (live-run finding)."""
         items = [{"id": "1", "description": "Granit Dinding",
                   "contractor_unit_price": 200000, "quantity": 2}]
         first = {"granit dinding": [
             {"name": "Kursi Plastik Serbaguna", "price_idr": 190000},
         ]}
-        second = {"granit": [
-            {"name": "Granit Alam 60x60", "price_idr": 195000},
-        ]}
+        provider = MagicMock()
+        provider.batch_search_sync.return_value = first
+        provider.rank_results.side_effect = self._mock_rank
 
-        provider = self._provider(first, second)
         pairs = batch_price_materials(
             items=items, provider=provider, supabase_client=MagicMock(),
         )
 
-        assert provider.batch_search_sync.call_count == 2
-        assert provider.batch_search_sync.call_args_list[1][0][0] == ["granit"]
+        assert provider.batch_search_sync.call_count == 1  # no retry
         _, match = pairs[0]
-        assert match.result is not None
+        assert match.result is None
 
     def test_accepted_retry_cached_under_simplified_key(self):
-        items = [{"id": "1", "description": "Granit Dinding",
+        items = [{"id": "1", "description": "Granit Dinding Premium",
                   "contractor_unit_price": 200000, "quantity": 2}]
-        first = {"granit dinding": [
+        first = {"granit dinding premium": [
             {"name": "Kursi Plastik Serbaguna", "price_idr": 190000},
         ]}
-        second = {"granit": [
-            {"name": "Granit Alam 60x60", "price_idr": 195000},
+        second = {"granit dinding": [
+            {"name": "Granit Dinding Alam 60x60", "price_idr": 195000},
         ]}
 
         provider = self._provider(first, second)
@@ -1578,8 +1580,8 @@ class TestRetryOnAllRejected:
 
         assert mock_wc.call_count == 1
         args = mock_wc.call_args[0]
-        assert args[1] == "granit"                      # query written
-        assert args[2] == canonicalize_for_cache("granit")  # cache key
+        assert args[1] == "granit dinding"                      # query written
+        assert args[2] == canonicalize_for_cache("granit dinding")  # cache key
 
 
 # =============================================================================

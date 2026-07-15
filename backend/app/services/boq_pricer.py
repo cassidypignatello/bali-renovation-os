@@ -284,17 +284,18 @@ def simplify_query(query: str) -> str:
     Indonesian material queries lead with the material noun, so broadening
     drops trailing qualifiers and never the head: >3 tokens keeps the first
     three ('keramik dinding kolam renang ex romance' → 'keramik dinding
-    kolam'); 2-3 tokens drop the last token ('granit dinding' → 'granit').
-    Returns '' when nothing can be dropped (single token), signalling the
-    caller to skip the retry. Note: a single-token retry neutralizes the
-    confidence gate (any product containing the token scores 1.0) — the
-    head-noun, imitation, and price-band gates remain the effective filters.
+    kolam'); a 3-token query drops the last token ('granit dinding 60x60' →
+    'granit dinding'). A query that would broaden to a SINGLE token is not
+    retried (returns ''): a one-word search neutralizes the confidence gate
+    (any product containing the word scores 1.0), which the live run showed
+    yields junk matches ('head shower' → 'head' → shampoo). Every retry query
+    therefore keeps at least two tokens.
     """
     words = query.split()
     if len(words) > 3:
         return " ".join(words[:3])
-    if len(words) >= 2:
-        return " ".join(words[:-1])
+    if len(words) == 3:
+        return " ".join(words[:2])
     return ""
 
 
