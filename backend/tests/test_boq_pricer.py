@@ -9,7 +9,7 @@ Uses mocks exclusively - no real API calls or Supabase writes.
 from __future__ import annotations
 
 from decimal import Decimal
-from unittest.mock import MagicMock, call
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 
@@ -24,6 +24,7 @@ from app.services.boq_pricer import (
     persist_price_results,
     _build_match_from_scrape,
     simplify_query,
+    canonicalize_for_cache,
     IMITATION_TOKENS,
 )
 
@@ -148,6 +149,143 @@ class TestNormalizeMaterialName:
         """Should return lowercase result."""
         result = normalize_material_name("GRANIT LANTAI PREMIUM")
         assert result == "granit lantai premium"
+
+
+class TestBuildSearchQueryBrandStrip:
+    """Brand markers (ex/eks/setara/merk/merek) and trailing brand words are stripped."""
+
+    def test_ex_brand_stripped_dimension_preserved(self):
+        from app.services.boq_pricer import build_search_query
+        assert build_search_query("Granit Ex Roman 60x60") == "granit 60x60"
+
+    def test_setara_brand_stripped_to_end(self):
+        from app.services.boq_pricer import build_search_query
+        # Descriptor loss ('putih') is an accepted tradeoff — generalizes the
+        # query, never touches the head noun.
+        assert build_search_query("Cat Setara Jotun Putih") == "cat"
+
+    def test_ex_with_dot_stripped(self):
+        from app.services.boq_pricer import build_search_query
+        assert build_search_query("Keramik Lantai Ex. Romance") == "keramik lantai"
+
+    def test_merk_stripped(self):
+        from app.services.boq_pricer import build_search_query
+        assert build_search_query("Semen Merk Tiga Roda") == "semen"
+
+    def test_no_marker_unchanged(self):
+        from app.services.boq_pricer import build_search_query
+        assert build_search_query("Granit Dinding 60x60") == "granit dinding 60x60"
+
+    def test_ex_inside_word_not_stripped(self):
+        from app.services.boq_pricer import build_search_query
+        assert build_search_query("Kayu Expose 4x6") == "kayu expose 4x6"
+
+    def test_normalization_still_applied(self):
+        from app.services.boq_pricer import build_search_query
+        assert build_search_query("Pas. Granit Ex Roman 60x60") == "granit 60x60"
+
+
+class TestBuildSearchQueryContextStrip:
+    """Room/location phrases are stripped; head-position tokens never are."""
+
+    def test_kolam_renang_stripped(self):
+        from app.services.boq_pricer import build_search_query
+        assert build_search_query("Keramik Lantai Kolam Renang") == "keramik lantai"
+
+    def test_balancing_tank_stripped(self):
+        from app.services.boq_pricer import build_search_query
+        assert build_search_query("Keramik Lantai Balancing Tank") == "keramik lantai"
+
+    def test_kamar_mandi_stripped(self):
+        from app.services.boq_pricer import build_search_query
+        assert build_search_query("Granit Dinding Kamar Mandi 60x60") == "granit dinding 60x60"
+
+    def test_context_word_in_head_position_never_stripped(self):
+        from app.services.boq_pricer import build_search_query
+        # 'gudang' is in CONTEXT_TOKENS but leads this query — the guard keeps it.
+        assert build_search_query("Gudang Prefab Baja") == "gudang prefab baja"
+
+    def test_product_nouns_excluded_from_context_tokens(self):
+        from app.services.boq_pricer import CONTEXT_TOKENS, build_search_query
+        # toilet/dapur/pantry are purchasable products, never stripped.
+        for noun in ("toilet", "dapur", "pantry", "dinding", "lantai"):
+            assert noun not in CONTEXT_TOKENS
+        assert build_search_query("Toilet Duduk Mono") == "toilet duduk mono"
+
+    def test_brand_and_context_combined(self):
+        from app.services.boq_pricer import build_search_query
+        assert (
+            build_search_query("Keramik Dinding Kolam Renang Ex Romance")
+            == "keramik dinding"
+        )
+
+    def test_multi_word_context_phrase_in_head_position_kept_whole(self):
+        from app.services.boq_pricer import build_search_query
+        # 'kolam renang' is a two-word CONTEXT_TOKENS phrase; when it leads the
+        # query the head-token guard must keep the whole phrase, not just the
+        # first word of it.
+        assert (
+            build_search_query("Kolam Renang Keramik Lantai")
+            == "kolam renang keramik lantai"
+        )
+
+
+class TestBuildSearchQuerySynonyms:
+    """English material nouns are rewritten to Indonesian marketplace terms."""
+
+    def test_plywood_rewritten_to_triplek(self):
+        from app.services.boq_pricer import build_search_query
+        assert build_search_query("Plywood 9mm") == "triplek 9mm"
+
+    def test_gypsum_rewritten_to_gipsum(self):
+        from app.services.boq_pricer import build_search_query
+        assert build_search_query("Gypsum Board 9mm") == "gipsum board 9mm"
+
+    def test_indonesian_query_unchanged(self):
+        from app.services.boq_pricer import build_search_query
+        assert build_search_query("Triplek 9mm") == "triplek 9mm"
+
+    def test_full_chain_brand_context_synonym(self):
+        from app.services.boq_pricer import build_search_query
+        assert (
+            build_search_query("Pas. Plywood Dinding Kolam Renang Ex Romance")
+            == "triplek dinding"
+        )
+
+
+class TestPipelineUsesCleanedQueries:
+    """batch_price_materials must search with build_search_query output."""
+
+    @staticmethod
+    def _mock_rank(results):
+        scored = []
+        for r in results:
+            s = MagicMock()
+            s.product = r
+            s.total_score = 0.8
+            scored.append(s)
+        return scored
+
+    def test_pipeline_searches_with_cleaned_query(self):
+        items = [{"id": "1", "description": "Keramik Dinding Kolam Renang Ex Romance",
+                  "contractor_unit_price": 120000, "quantity": 5}]
+        provider = MagicMock()
+        provider.batch_search_sync.return_value = {
+            "keramik dinding": [
+                {"name": "Keramik Dinding 25x40 Glossy", "price_idr": 115000},
+            ]
+        }
+        provider.rank_results.side_effect = self._mock_rank
+
+        pairs = batch_price_materials(
+            items=items, provider=provider, supabase_client=MagicMock(),
+        )
+
+        first_call_queries = provider.batch_search_sync.call_args_list[0][0][0]
+        assert first_call_queries == ["keramik dinding"]
+        _, match = pairs[0]
+        assert match.result is not None
+        assert match.search_query == "keramik dinding"
 
 
 class TestNormalizeShortQuerySkipped:
@@ -412,9 +550,17 @@ class TestBatchPriceMaterialsCallsProvider:
             "granit dinding premium": [{"name": "Granit Dinding Premium", "price_idr": 150000}],
             "pipa pvc 4 inch": [{"name": "Pipa PVC 4 inch", "price_idr": 30000}],
         }
-        mock_provider.rank_results.return_value = [
-            _make_best_seller_score(name="Granit Dinding Premium", price_idr=150000),
-        ]
+
+        def mock_rank(results):
+            scored = []
+            for r in results:
+                s = MagicMock()
+                s.product = r
+                s.total_score = 0.8
+                scored.append(s)
+            return scored
+
+        mock_provider.rank_results.side_effect = mock_rank
 
         batch_price_materials(
             items=items,
@@ -908,6 +1054,7 @@ class TestImitationProductFilter:
             return scored
 
         provider.rank_results.side_effect = mock_rank
+        self._last_provider = provider
         return batch_price_materials(
             items=items, provider=provider, supabase_client=MagicMock(), **kwargs
         )
@@ -920,7 +1067,7 @@ class TestImitationProductFilter:
         items = [{"id": "1", "description": "Granit Dinding Kolam Renang",
                   "contractor_unit_price": 180000, "quantity": 10}]
         products = {
-            "granit dinding kolam renang": [
+            "granit dinding": [
                 {
                     "name": (
                         "280CM X 120CM MARBLE GRANIT GULUNG BESAR PVC "
@@ -934,6 +1081,8 @@ class TestImitationProductFilter:
         _, match = pairs[0]
         assert match.result is None, "Wallpaper sticker must not match a granit query"
         assert match.match_confidence == 0.0
+        # Anti-vacuous: the candidate list must have reached ranking/gating.
+        assert self._last_provider.rank_results.call_count >= 1
 
     def test_legitimate_granit_product_not_rejected(self):
         """A real granite product must still be accepted for a granit query."""
@@ -1051,6 +1200,140 @@ class TestHeadNounGate:
 
 
 # =============================================================================
+# _walk_candidates Tests
+# =============================================================================
+
+
+class TestWalkCandidates:
+    """_walk_candidates: first gate-passing candidate wins; none pass -> no-result."""
+
+    def _item(self, **overrides):
+        item = {"id": "1", "description": "Granit Dinding 60x60",
+                "contractor_unit_price": 200000, "quantity": 10}
+        item.update(overrides)
+        return item
+
+    def test_accepts_first_passing_candidate(self):
+        from app.services.boq_pricer import _walk_candidates
+        junk = _make_best_seller_score(name="Vacuum Storage Bag Jumbo", price_idr=150000)
+        good = _make_best_seller_score(name="Granit Dinding 60x60 Glossy", price_idr=190000)
+
+        match, accepted = _walk_candidates(self._item(), "granit dinding 60x60", [junk, good])
+
+        assert match.result is not None
+        assert match.result.product_name == "Granit Dinding 60x60 Glossy"
+        assert accepted is good
+
+    def test_all_rejected_returns_no_result_and_none(self):
+        from app.services.boq_pricer import _walk_candidates
+        junk1 = _make_best_seller_score(name="Vacuum Storage Bag Jumbo", price_idr=150000)
+        junk2 = _make_best_seller_score(name="Kursi Plastik Serbaguna", price_idr=160000)
+
+        match, accepted = _walk_candidates(self._item(), "granit dinding 60x60", [junk1, junk2])
+
+        assert match.result is None
+        assert match.match_confidence == 0.0
+        assert accepted is None
+
+    def test_empty_ranked_list_returns_no_result(self):
+        from app.services.boq_pricer import _walk_candidates
+
+        match, accepted = _walk_candidates(self._item(), "granit dinding 60x60", [])
+
+        assert match.result is None
+        assert accepted is None
+
+    def test_candidate_beyond_rank_five_reachable(self):
+        """Unit test pinning that _walk_candidates does not truncate the ranked list: rank 7 of 7 must be reachable."""
+        from app.services.boq_pricer import _walk_candidates
+        junk = [
+            _make_best_seller_score(name=f"Kursi Plastik Model {i}", price_idr=150000)
+            for i in range(6)
+        ]
+        good = _make_best_seller_score(name="Granit Dinding 60x60 Polished", price_idr=190000)
+
+        match, accepted = _walk_candidates(self._item(), "granit dinding 60x60", junk + [good])
+
+        assert match.result is not None
+        assert accepted is good
+
+
+class TestCandidateWalkPipeline:
+    """batch_price_materials must judge every ranked candidate, not just ranked[0]."""
+
+    @staticmethod
+    def _mock_rank(results):
+        scored = []
+        for r in results:
+            s = MagicMock()
+            s.product = r
+            s.total_score = 0.8
+            scored.append(s)
+        return scored
+
+    def _provider(self, results_by_query):
+        provider = MagicMock()
+        provider.batch_search_sync.return_value = results_by_query
+        provider.rank_results.side_effect = self._mock_rank
+        return provider
+
+    def test_second_ranked_candidate_priced_when_top_is_junk(self):
+        items = [{"id": "1", "description": "Granit Dinding 60x60",
+                  "contractor_unit_price": 200000, "quantity": 10}]
+        provider = self._provider({
+            "granit dinding 60x60": [
+                {"name": "Vacuum Storage Bag Jumbo", "price_idr": 150000},
+                {"name": "Granit Dinding 60x60 Glossy", "price_idr": 190000},
+            ]
+        })
+
+        pairs = batch_price_materials(
+            items=items, provider=provider, supabase_client=MagicMock(),
+        )
+
+        _, match = pairs[0]
+        assert match.result is not None
+        assert match.result.product_name == "Granit Dinding 60x60 Glossy"
+
+    def test_cache_write_receives_accepted_candidate(self):
+        items = [{"id": "1", "description": "Granit Dinding 60x60",
+                  "contractor_unit_price": 200000, "quantity": 10}]
+        provider = self._provider({
+            "granit dinding 60x60": [
+                {"name": "Vacuum Storage Bag Jumbo", "price_idr": 150000},
+                {"name": "Granit Dinding 60x60 Glossy", "price_idr": 190000},
+            ]
+        })
+
+        with patch("app.services.boq_pricer._write_cache") as mock_wc:
+            batch_price_materials(
+                items=items, provider=provider, supabase_client=MagicMock(),
+            )
+
+        assert mock_wc.call_count == 1
+        best_product = mock_wc.call_args[0][3]
+        assert best_product["name"] == "Granit Dinding 60x60 Glossy"
+
+    def test_no_cache_write_when_all_candidates_rejected(self):
+        items = [{"id": "1", "description": "Granit Dinding 60x60",
+                  "contractor_unit_price": 200000, "quantity": 10}]
+        provider = self._provider({
+            "granit dinding 60x60": [
+                {"name": "Vacuum Storage Bag Jumbo", "price_idr": 150000},
+            ]
+        })
+
+        with patch("app.services.boq_pricer._write_cache") as mock_wc:
+            pairs = batch_price_materials(
+                items=items, provider=provider, supabase_client=MagicMock(),
+            )
+
+        mock_wc.assert_not_called()
+        _, match = pairs[0]
+        assert match.result is None
+
+
+# =============================================================================
 # F6: Query-Simplification Fallback Tests
 # =============================================================================
 
@@ -1064,11 +1347,12 @@ class TestSimplifyQuery:
     def test_exactly_four_words_returns_three(self):
         assert simplify_query("granit dinding 60x60 premium") == "granit dinding 60x60"
 
-    def test_three_word_query_returns_empty(self):
-        """A 3-word query cannot be meaningfully simplified — return '' to skip retry."""
-        assert simplify_query("granit dinding 60x60") == ""
+    def test_three_word_query_drops_last_token(self):
+        """A 3-token query broadens by dropping the trailing qualifier (head noun kept)."""
+        assert simplify_query("granit dinding 60x60") == "granit dinding"
 
-    def test_two_word_query_returns_empty(self):
+    def test_two_word_query_not_broadened(self):
+        """A 2-token query would broaden to a single token (junk-prone) — skip the retry."""
         assert simplify_query("granit dinding") == ""
 
     def test_one_word_query_returns_empty(self):
@@ -1081,7 +1365,10 @@ class TestSimplifyQuery:
 class TestQuerySimplificationFallback:
     """
     When the first scrape returns zero candidates for a query, a ONE-time
-    retry is made with the first 3 tokens of the query (F6 fix).
+    retry is made with a simplified query — first 3 tokens, or the last token
+    dropped for a 3-token query. A query that would broaden to a single token
+    is NOT retried (F6 fix + coverage retry; single-token retries removed after
+    the live run showed they produce junk).
     """
 
     def _make_provider(self, first_results: dict, second_results: dict) -> MagicMock:
@@ -1101,16 +1388,16 @@ class TestQuerySimplificationFallback:
         provider.rank_results.side_effect = mock_rank
         return provider
 
-    def test_five_word_query_retried_with_three_word_simplified(self):
-        """A 5-word query that returns nothing is retried with its first 3 words."""
+    def test_long_query_retried_with_shorter_simplified(self):
+        """A query that returns nothing is retried once with a shorter (>=2-token) query."""
         items = [{"id": "1",
-                  "description": "Keramik Dinding Kolam Renang Ex Romance",
+                  "description": "Granit Dinding Motif Premium Import",
                   "contractor_unit_price": 120000,
                   "quantity": 5}]
 
-        first = {"keramik dinding kolam renang ex romance": []}
-        second = {"keramik dinding kolam": [
-            {"name": "Keramik Dinding Kolam Renang 25x40", "price_idr": 115000},
+        first = {"granit dinding motif premium import": []}
+        second = {"granit dinding motif": [
+            {"name": "Granit Dinding Motif Kayu 60x60", "price_idr": 115000},
         ]}
 
         provider = self._make_provider(first, second)
@@ -1121,20 +1408,20 @@ class TestQuerySimplificationFallback:
         )
 
         assert provider.batch_search_sync.call_count == 2
-        # Second call must use the simplified query
+        # Second call must use the simplified query (first 3 tokens)
         second_call_queries = provider.batch_search_sync.call_args_list[1][0][0]
-        assert second_call_queries == ["keramik dinding kolam"]
+        assert second_call_queries == ["granit dinding motif"]
 
         _, match = pairs[0]
         assert match.result is not None
-        assert match.search_query == "keramik dinding kolam"
+        assert match.search_query == "granit dinding motif"
 
-    def test_short_query_not_retried(self):
-        """A query of 3 words or fewer that returns nothing is NOT retried."""
-        items = [{"id": "1", "description": "Granit Dinding",
+    def test_one_word_query_not_retried(self):
+        """A single-token query cannot be broadened — no retry."""
+        items = [{"id": "1", "description": "Granit",
                   "contractor_unit_price": 200000, "quantity": 2}]
 
-        first = {"granit dinding": []}
+        first = {"granit": []}
         provider = MagicMock()
         provider.batch_search_sync.return_value = first
         provider.rank_results.return_value = []
@@ -1145,7 +1432,6 @@ class TestQuerySimplificationFallback:
             supabase_client=MagicMock(),
         )
 
-        # Only one call — no retry for a 2-word query
         assert provider.batch_search_sync.call_count == 1
         _, match = pairs[0]
         assert match.result is None
@@ -1166,10 +1452,10 @@ class TestQuerySimplificationFallback:
             "granit lantai 60x60": [
                 {"name": "Granit Lantai 60x60 Glossy", "price_idr": 190000},
             ],
-            "keramik dinding kolam renang premium": [],
+            "keramik dinding premium": [],
         }
         second = {
-            "keramik dinding kolam": [
+            "keramik dinding": [
                 {"name": "Keramik Dinding Kolam 25x40", "price_idr": 85000},
             ],
         }
@@ -1192,7 +1478,7 @@ class TestQuerySimplificationFallback:
 
         # Item 2 matched via fallback
         assert results["2"].result is not None
-        assert results["2"].search_query == "keramik dinding kolam"
+        assert results["2"].search_query == "keramik dinding"
 
     def test_fallback_no_results_still_no_match(self):
         """If the retry also returns nothing, the item stays as a no-result match."""
@@ -1212,6 +1498,90 @@ class TestQuerySimplificationFallback:
         assert provider.batch_search_sync.call_count == 2
         _, match = pairs[0]
         assert match.result is None
+
+
+class TestRetryOnAllRejected:
+    """Items whose candidates were ALL gate-rejected get the one-round simplified retry."""
+
+    @staticmethod
+    def _mock_rank(results):
+        scored = []
+        for r in results:
+            s = MagicMock()
+            s.product = r
+            s.total_score = 0.8
+            scored.append(s)
+        return scored
+
+    def _provider(self, first, second):
+        provider = MagicMock()
+        provider.batch_search_sync.side_effect = [first, second]
+        provider.rank_results.side_effect = self._mock_rank
+        return provider
+
+    def test_all_rejected_item_retried_with_simplified_query(self):
+        items = [{"id": "1", "description": "Granit Dinding Premium Import",
+                  "contractor_unit_price": 200000, "quantity": 2}]
+        first = {"granit dinding premium import": [
+            {"name": "Kursi Plastik Serbaguna", "price_idr": 190000},
+        ]}
+        second = {"granit dinding premium": [
+            {"name": "Granit Dinding Premium 60x60", "price_idr": 195000},
+        ]}
+
+        provider = self._provider(first, second)
+        pairs = batch_price_materials(
+            items=items, provider=provider, supabase_client=MagicMock(),
+        )
+
+        assert provider.batch_search_sync.call_count == 2
+        second_call_queries = provider.batch_search_sync.call_args_list[1][0][0]
+        assert second_call_queries == ["granit dinding premium"]
+
+        _, match = pairs[0]
+        assert match.result is not None
+        assert match.search_query == "granit dinding premium"
+
+    def test_two_word_all_rejected_not_retried(self):
+        """A 2-token all-rejected query is NOT retried — broadening it to one token
+        neutralizes the confidence gate and produces junk (live-run finding)."""
+        items = [{"id": "1", "description": "Granit Dinding",
+                  "contractor_unit_price": 200000, "quantity": 2}]
+        first = {"granit dinding": [
+            {"name": "Kursi Plastik Serbaguna", "price_idr": 190000},
+        ]}
+        provider = MagicMock()
+        provider.batch_search_sync.return_value = first
+        provider.rank_results.side_effect = self._mock_rank
+
+        pairs = batch_price_materials(
+            items=items, provider=provider, supabase_client=MagicMock(),
+        )
+
+        assert provider.batch_search_sync.call_count == 1  # no retry
+        _, match = pairs[0]
+        assert match.result is None
+
+    def test_accepted_retry_cached_under_simplified_key(self):
+        items = [{"id": "1", "description": "Granit Dinding Premium",
+                  "contractor_unit_price": 200000, "quantity": 2}]
+        first = {"granit dinding premium": [
+            {"name": "Kursi Plastik Serbaguna", "price_idr": 190000},
+        ]}
+        second = {"granit dinding": [
+            {"name": "Granit Dinding Alam 60x60", "price_idr": 195000},
+        ]}
+
+        provider = self._provider(first, second)
+        with patch("app.services.boq_pricer._write_cache") as mock_wc:
+            batch_price_materials(
+                items=items, provider=provider, supabase_client=MagicMock(),
+            )
+
+        assert mock_wc.call_count == 1
+        args = mock_wc.call_args[0]
+        assert args[1] == "granit dinding"                      # query written
+        assert args[2] == canonicalize_for_cache("granit dinding")  # cache key
 
 
 # =============================================================================
@@ -1595,9 +1965,11 @@ class TestHeadNounPrecisionBias:
     The gate requires the query's head noun as a whole word in the product
     name. This intentionally drops spelling/synonym variants (e.g. plywood vs
     triplek, gypsum vs gipsum) rather than risk a wrong match feeding the
-    customer-facing savings number. These assertions pin that tradeoff so any
-    future softening (e.g. a synonym map) is a conscious change, and so the
-    coverage cost is visible. Monitor production `boq_match_rejected` logs with
+    customer-facing savings number. A synonym map now exists at the QUERY
+    layer (EN_ID_SYNONYMS in build_search_query) — EN queries are rewritten
+    to ID before search, so these gate-level rejections apply only to product
+    names that reach the gate untranslated. The gate itself remains
+    synonym-blind by design. Monitor production `boq_match_rejected` logs with
     reason=head_noun_missing to quantify real-world impact.
     """
 

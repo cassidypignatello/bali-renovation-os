@@ -596,8 +596,28 @@ class TestTokopediaProviderRankResults:
             mock_rank.return_value = ["ranked_result_1", "ranked_result_2"]
             ranked = provider.rank_results(products)
 
-        mock_rank.assert_called_once_with(products)
+        mock_rank.assert_called_once_with(products, top_n=len(products))
         assert ranked == ["ranked_result_1", "ranked_result_2"]
+
+    def test_rank_results_returns_all_candidates(self):
+        """rank_results must not truncate — the candidate walk needs every scraped product."""
+        from app.integrations.marketplace import TokopediaProvider
+
+        mock_client = MagicMock()
+        with patch(
+            "app.integrations.marketplace.ApifyClient", return_value=mock_client
+        ):
+            provider = TokopediaProvider(apify_token="test_token")
+
+        products = [
+            {"name": f"Granit {i}", "price_idr": 100000 + i * 1000,
+             "rating": 4.0, "sold_count": 10}
+            for i in range(8)
+        ]
+
+        ranked = provider.rank_results(products)
+
+        assert len(ranked) == 8
 
 
 class TestMockMarketplaceProvider:

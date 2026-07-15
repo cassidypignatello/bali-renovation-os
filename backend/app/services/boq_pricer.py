@@ -21,7 +21,7 @@ import re
 import structlog
 from datetime import datetime, timezone, timedelta
 from decimal import Decimal
-from typing import Callable, Optional
+from typing import TYPE_CHECKING, Callable, Optional
 
 from app.integrations.marketplace import (
     MarketplaceProvider,
@@ -29,6 +29,9 @@ from app.integrations.marketplace import (
     MarketplaceSource,
     MaterialPriceMatch,
 )
+
+if TYPE_CHECKING:
+    from app.integrations.apify import BestSellerScore
 
 logger = structlog.get_logger()
 
@@ -172,6 +175,94 @@ def normalize_material_name(description: str) -> str:
     return result
 
 
+# Brand markers in Indonesian BoQs ("granit ex Roman" = "Roman brand or
+# equivalent"). The strip removes the marker and following alpha words but
+# stops at dimension-like tokens (60x60, 9mm), which stay in the query.
+_BRAND_STRIP_RE = re.compile(
+    r"\b(?:ex|eks|setara|merk|merek)\b\.?\s+(?:[a-z]+\b\s*)*",
+    re.IGNORECASE,
+)
+
+
+# Room/location phrases that pollute marketplace searches. Whole-phrase,
+# word-boundary matches only. Deliberately EXCLUDED: product head nouns
+# (toilet, dapur, pantry) and product-type qualifiers (dinding, lantai) —
+# stripping those would behead queries and defeat the head-noun gate.
+CONTEXT_TOKENS = [
+    "kolam renang",
+    "balancing tank",
+    "ruang mesin",
+    "kamar mandi",
+    "kamar tidur",
+    "main entrance",
+    "carport",
+    "garasi",
+    "gudang",
+    "teras",
+    "balkon",
+    "rooftop",
+    "koridor",
+]
+
+_CONTEXT_RES = [
+    re.compile(rf"\b{re.escape(phrase)}\b", re.IGNORECASE)
+    for phrase in CONTEXT_TOKENS
+]
+
+
+def _strip_context(query: str) -> str:
+    """Remove context phrases, except in head position (head-token guard)."""
+    result = query
+    for pattern in _CONTEXT_RES:
+        result = pattern.sub(
+            lambda m: m.group(0) if m.start() == 0 else " ",
+            result,
+        )
+    return re.sub(r"\s+", " ", result).strip()
+
+
+# Tokopedia is Indonesian-first: searching the ID term returns better
+# candidates AND makes the head-noun gate pass naturally for EN queries.
+EN_ID_SYNONYMS = {
+    "plywood": "triplek",
+    "gypsum": "gipsum",
+    "cement": "semen",
+    "paint": "cat",
+    "glass": "kaca",
+    "wood": "kayu",
+    "door": "pintu",
+    "window": "jendela",
+}
+
+
+def _rewrite_synonyms(query: str) -> str:
+    """Token-wise EN→ID rewrite using the bounded synonym map."""
+    return " ".join(EN_ID_SYNONYMS.get(word, word) for word in query.split())
+
+
+def build_search_query(description: str) -> str:
+    """
+    Build a marketplace search query from a raw BoQ description.
+
+    Wraps normalize_material_name, then strips brand suffixes and
+    room/context phrases so polluted queries stop dragging irrelevant
+    products into the candidate pool, then rewrites bare English material
+    nouns to their Indonesian marketplace equivalents. Context phrases in
+    head position are never stripped (head-token guard).
+
+    Args:
+        description: Raw material description from the BOQ.
+
+    Returns:
+        Cleaned, lowercased search query string.
+    """
+    query = normalize_material_name(description)
+    query = re.sub(r"\s+", " ", _BRAND_STRIP_RE.sub(" ", query)).strip()
+    query = _strip_context(query)
+    query = _rewrite_synonyms(query)
+    return query
+
+
 def canonicalize_for_cache(normalized_name: str) -> str:
     """
     Canonicalize a normalized material name for cache key lookup.
@@ -191,17 +282,24 @@ def canonicalize_for_cache(normalized_name: str) -> str:
 
 def simplify_query(query: str) -> str:
     """
-    Broaden a search query that returned nothing.
+    Broaden a search query for the one-round fallback retry.
 
-    Keeps the first three tokens (Indonesian material queries lead with the
-    material noun: 'keramik dinding kolam renang ex romance' → 'keramik
-    dinding kolam'). Returns '' when simplification wouldn't change anything,
-    signalling the caller to skip the retry.
+    Indonesian material queries lead with the material noun, so broadening
+    drops trailing qualifiers and never the head: >3 tokens keeps the first
+    three ('keramik dinding kolam renang ex romance' → 'keramik dinding
+    kolam'); a 3-token query drops the last token ('granit dinding 60x60' →
+    'granit dinding'). A query that would broaden to a SINGLE token is not
+    retried (returns ''): a one-word search neutralizes the confidence gate
+    (any product containing the word scores 1.0), which the live run showed
+    yields junk matches ('head shower' → 'head' → shampoo). Every retry query
+    therefore keeps at least two tokens.
     """
     words = query.split()
-    if len(words) <= 3:
-        return ""
-    return " ".join(words[:3])
+    if len(words) > 3:
+        return " ".join(words[:3])
+    if len(words) == 3:
+        return " ".join(words[:2])
+    return ""
 
 
 # =============================================================================
@@ -531,14 +629,16 @@ def batch_price_materials(
     Main pipeline entry point. Runs fully synchronously.
 
     Steps:
-      1. Normalize material names into search queries.
+      1. Build search queries via build_search_query (normalize + strip
+         brand/context + EN->ID synonym rewrite).
       2. Skip items whose normalized query is < 3 characters.
       3. Prioritize owner_supply items first, then others.
       4. Cap at max_lookups.
       5. Check Supabase materials cache for fresh prices.
       6. Scrape marketplace only for cache misses.
       7. Write scrape results back to cache.
-      8. For each result: rank candidates, pick best, calculate delta.
+      8. For each result: rank candidates, then walk them in order and take
+         the first that passes the quality gate; calculate delta.
       9. Apply quality gate: reject matches below min_confidence or outside
          the price-sanity band [contractor/max_price_ratio, contractor*max_price_ratio].
 
@@ -558,7 +658,7 @@ def batch_price_materials(
     # --- Prepare priceable items ---
     priceable: list[dict] = []
     for item in items:
-        query = normalize_material_name(item.get("description", ""))
+        query = build_search_query(item.get("description", ""))
         if len(query) < 3:
             continue
         cache_key = canonicalize_for_cache(query)
@@ -627,78 +727,78 @@ def batch_price_materials(
             batch_progress=_on_batch_progress,
         )
 
-        # First pass: build matches, track which items got zero candidates
-        fallback_needed: list[tuple[int, dict, str]] = []  # (matches-index, item, simplified_query)
+        # First pass: build matches, track which items need a fallback retry
+        fallback_needed: list[tuple[int, dict, str, str]] = []  # (matches-index, item, simplified_query, reason)
 
         for idx, (i, item) in enumerate(uncached_items):
             query = item["_search_query"]
             candidates = raw_results.get(query, [])
 
-            if candidates:
-                ranked = provider.rank_results(candidates)
-                best = ranked[0] if ranked else None
-            else:
-                best = None
+            ranked = provider.rank_results(candidates) if candidates else []
+            match, accepted = _walk_candidates(
+                item, query, ranked,
+                min_confidence=min_confidence, max_price_ratio=max_price_ratio,
+            )
+            matches[i] = match
 
-            matches[i] = _build_match_from_scrape(item, query, best, min_confidence=min_confidence, max_price_ratio=max_price_ratio)
-
-            # Only cache accepted matches — bad matches are rejected by the gate
-            if best is not None and matches[i].result is not None:
+            # Only cache accepted matches — cache truth follows gate truth
+            if accepted is not None and match.result is not None:
                 _write_cache(
                     supabase_client,
                     query,
                     item["_cache_key"],
-                    best.product,
+                    accepted.product,
                     candidates,
                     unit=item.get("unit"),
                 )
 
-            # Track items that got no candidates for fallback retry
-            if not candidates:
+            # Track items with no accepted match for fallback retry (zero
+            # candidates, or all candidates gate-rejected)
+            if matches[i].result is None:
                 simplified = simplify_query(query)
                 if simplified:
-                    fallback_needed.append((i, item, simplified))
+                    reason = "no_candidates" if not candidates else "all_rejected"
+                    fallback_needed.append((i, item, simplified, reason))
 
             if progress_callback and total > 0:
                 # Per-item post-processing uses the 80-85% range
                 pct = 80 + int(5 * (idx + 1) / n_uncached)
                 progress_callback(min(pct, 85))
 
-        # One-round query-simplification fallback for zero-candidate items
+        # One-round query-simplification fallback for zero-candidate and
+        # all-rejected items
         if fallback_needed:
+            reason_counts: dict[str, int] = {}
+            for _, _, _, reason in fallback_needed:
+                reason_counts[reason] = reason_counts.get(reason, 0) + 1
             logger.info(
                 "boq_query_fallback",
                 count=len(fallback_needed),
+                reasons=reason_counts,
             )
-            simplified_queries = [sq for _, _, sq in fallback_needed]
+            simplified_queries = [sq for _, _, sq, _ in fallback_needed]
             fallback_results = provider.batch_search_sync(simplified_queries, limit_per_query=10)
 
-            for i, item, simplified in fallback_needed:
+            for i, item, simplified, _reason in fallback_needed:
                 candidates = fallback_results.get(simplified, [])
 
-                if candidates:
-                    ranked = provider.rank_results(candidates)
-                    best = ranked[0] if ranked else None
-                else:
-                    best = None
-
-                # Build match against the simplified query so confidence
-                # is computed against the words we actually searched.
-                match = _build_match_from_scrape(
-                    item, simplified, best,
-                    min_confidence=min_confidence,
-                    max_price_ratio=max_price_ratio,
+                ranked = provider.rank_results(candidates) if candidates else []
+                # Match against the simplified query so confidence is computed
+                # against the words we actually searched.
+                match, accepted = _walk_candidates(
+                    item, simplified, ranked,
+                    min_confidence=min_confidence, max_price_ratio=max_price_ratio,
                 )
                 matches[i] = match
 
-                # Only cache accepted matches — bad matches are rejected by the gate
-                if best is not None and match.result is not None:
+                # Only cache accepted matches — cache truth follows gate truth
+                if accepted is not None and match.result is not None:
                     simplified_cache_key = canonicalize_for_cache(simplified)
                     _write_cache(
                         supabase_client,
                         simplified,
                         simplified_cache_key,
-                        best.product,
+                        accepted.product,
                         candidates,
                         unit=item.get("unit"),
                     )
@@ -840,6 +940,53 @@ def _build_match_from_scrape(
         price_difference_pct=diff_pct,
         from_cache=False,
     )
+
+
+def _walk_candidates(
+    item: dict,
+    query: str,
+    ranked: list["BestSellerScore"],
+    min_confidence: float = 0.3,
+    max_price_ratio: float = 5.0,
+) -> tuple[MaterialPriceMatch, Optional["BestSellerScore"]]:
+    """
+    Walk ranked candidates through the quality gate; first acceptance wins.
+
+    rank_results orders by best-seller score (price/rating/sales), not by
+    relevance to the query — the top-scored product is often a popular but
+    wrong item while a true match sits lower. Judging every candidate with
+    the unchanged _build_match_from_scrape gate recovers those matches
+    without loosening the gate itself.
+
+    Args:
+        item: BOQ item dict (same contract as _build_match_from_scrape).
+        query: Normalized search query.
+        ranked: BestSellerScore list from provider.rank_results (may be empty).
+        min_confidence: Passed through to the gate.
+        max_price_ratio: Passed through to the gate.
+
+    Returns:
+        (match, accepted): the first accepted match and its candidate, or
+        (no-result match, None) when no candidate passes the gate.
+    """
+    for rank, candidate in enumerate(ranked, start=1):
+        match = _build_match_from_scrape(
+            item, query, candidate,
+            min_confidence=min_confidence, max_price_ratio=max_price_ratio,
+        )
+        if match.result is not None:
+            logger.info(
+                "boq_candidate_walk",
+                query=query, candidates_evaluated=rank, accepted_rank=rank,
+            )
+            return match, candidate
+
+    if ranked:
+        logger.info(
+            "boq_candidate_walk",
+            query=query, candidates_evaluated=len(ranked), all_rejected=True,
+        )
+    return _no_result_match(query, from_cache=False), None
 
 
 # =============================================================================

@@ -13,7 +13,12 @@ from decimal import Decimal
 from enum import Enum
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+# boq_items.item_number is VARCHAR(20) (migrations/007). GPT-4o extraction can
+# emit a longer value; cap it at the model boundary so no persistence path can
+# overflow the column and abort the job with Postgres 22001.
+_ITEM_NUMBER_MAX_LEN = 20
 
 
 class BoQJobStatus(str, Enum):
@@ -71,6 +76,12 @@ class BoQItemBase(BaseModel):
     quantity: Optional[Decimal] = Field(None, description="Quantity from BoQ")
     contractor_unit_price: Optional[Decimal] = Field(None, description="Contractor's unit price (IDR)")
     contractor_total: Optional[Decimal] = Field(None, description="Contractor's total (IDR)")
+
+    @field_validator("item_number")
+    @classmethod
+    def _cap_item_number(cls, v: Optional[str]) -> Optional[str]:
+        """Cap to the boq_items.item_number VARCHAR(20) column width."""
+        return v[:_ITEM_NUMBER_MAX_LEN] if v is not None else v
 
 
 class BoQItemExtracted(BoQItemBase):
